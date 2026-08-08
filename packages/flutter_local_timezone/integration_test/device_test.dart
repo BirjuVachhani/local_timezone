@@ -9,7 +9,17 @@
 // nothing else. It does not need to own the tests:
 //
 //     cd packages/flutter_local_timezone/test_host
-//     flutter test ../integration_test -d <device>
+//     flutter test integration_test -d <device>
+//
+// The command targets the delegating entrypoint under `test_host`, which calls
+// this file's [main], so the cases themselves still live with the package that
+// owns them. The indirection is not cosmetic. `flutter test` decides a file is
+// a device test by checking that its path starts with `<cwd>/integration_test`,
+// so passing `../integration_test` from `test_host` fails that check, and the
+// run silently downgrades to `flutter_tester` on the host: `-d` is ignored, no
+// app is built, and the provider under test is never reached. It reports a
+// green suite while proving nothing about the device, so keep the path
+// relative to the runner project.
 //
 // Two of the cases below compare against a zone the harness configured, which
 // this process cannot discover for itself. CI passes it in:
@@ -18,8 +28,8 @@
 //     --dart-define=EXPECTED_RAW=Asia/Calcutta
 //
 // Both are optional. Left unset, those two cases skip and the rest still run,
-// so a bare `flutter test ../integration_test -d <device>` on a workstation is
-// a useful smoke test rather than a failure.
+// so a bare `flutter test integration_test -d <device>` on a workstation is a
+// useful smoke test rather than a failure.
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_timezone/flutter_local_timezone.dart';

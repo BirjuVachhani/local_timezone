@@ -133,21 +133,24 @@ jobs:
           # `-listtimezones`, and that needs the Full Disk Access a CI shell
           # does not have, so on a runner it rejects every zone there is:
           # "Asia/Kolkata is not a valid timezone". The symlink is what
-          # Foundation reads anyway, so write it directly.
-          if [ ! -f "/usr/share/zoneinfo/$ZONE" ]; then
+          # Foundation reads anyway, so write it directly. Its target has to
+          # use Foundation's zoneinfo root, not /usr/share/zoneinfo, which is
+          # itself a symlink. Foundation recovers the name by stripping this
+          # prefix from the raw /etc/localtime target and otherwise falls back
+          # to GMT even though libc can read the same tzfile.
+          zoneinfo=/var/db/timezone/zoneinfo
+          if [ ! -f "$zoneinfo/$ZONE" ]; then
             echo "::error::no zone file for $ZONE in this tzdata"
             exit 1
           fi
-          sudo ln -sfh "/usr/share/zoneinfo/$ZONE" /etc/localtime
+          sudo ln -sfh "$zoneinfo/$ZONE" /etc/localtime
 
-          # Independent check, because writing the symlink and then reading it
-          # back would prove nothing. libc going through /etc/localtime has to
-          # agree with libc going through TZ. Both are evaluated for now, so
-          # this stays correct either side of a DST boundary.
-          from_symlink=$(date +%z)
-          from_tz=$(TZ="$ZONE" date +%z)
-          if [ "$from_symlink" != "$from_tz" ]; then
-            echo "::error::wanted $ZONE ($from_tz), /etc/localtime gives $from_symlink"
+          # Ask the same Foundation API family as the Apple provider. `date`
+          # only proves libc can read the tzfile and misses a failure to recover
+          # its IANA name, which is the behavior this matrix needs to exercise.
+          actual=$(swift -e 'import Foundation; print(NSTimeZone.local.identifier)')
+          if [ "$actual" != "$ZONE" ]; then
+            echo "::error::wanted $ZONE, Foundation reports $actual"
             exit 1
           fi
 
@@ -264,46 +267,24 @@ jobs:
           ZONE: ${{ matrix.zone }}
         with:
           api-level: 35
-          # `google_apis`, not `google_apis_playstore`. Only the userdebug
-          # image lets `adb root` through, and without root the property below
-          # cannot be written at all: a Play Store image answers `adbd cannot
-          # run as root in production builds` and then `Failed to set property
-          # 'persist.sys.timezone'`.
+          # Keep the `google_apis` userdebug image, not the Play Store user
+          # image. A Play Store image refuses both `adb root` and a direct
+          # `setprop persist.sys.timezone`. The harness no longer needs either,
+          # but retaining the debuggable image preserves the direct property
+          # write as a diagnostic fallback if the system-service path fails.
           target: google_apis
           arch: x86_64
           working-directory: packages/flutter_local_timezone/test_host
-          script: |
-            adb root
-            adb wait-for-device
-
-            # Otherwise the framework is free to resync the zone from the
-            # network partway through and undo the line below.
-            adb shell settings put global auto_time_zone 0
-
-            # The provider reads exactly this property, and so does bionic when
-            # `TZ` is unset, so writing it moves the provider and `DateTime`
-            # together. That is what keeps the round trip assertion meaningful
-            # here instead of tautological. Contrast Windows, where `TZ` moves
-            # only one of the two.
-            adb shell setprop persist.sys.timezone "$ZONE"
-            actual=$(adb shell getprop persist.sys.timezone | tr -d '\r')
-            if [ "$actual" != "$ZONE" ]; then
-              echo "::error::wanted $ZONE, the device reports '$actual'"
-              exit 1
-            fi
-
-            # Read rather than assumed to be emulator-5554, so a second
-            # emulator or a shifted port surfaces as a wrong-device run instead
-            # of a missing-device error.
-            serial=$(adb devices | awk '/emulator/ {print $1; exit}')
-
-            # `EXPECTED_RAW` is the same string as `EXPECTED_ZONE` because the
-            # Android provider returns the property verbatim as `raw`, and the
-            # property is what was just written. Both are already primary IANA
-            # names, so canonicalization is a no-op on all three.
-            flutter test ../integration_test -d "$serial" \
-              --dart-define=EXPECTED_ZONE="$ZONE" \
-              --dart-define=EXPECTED_RAW="$ZONE"
+          # This action intentionally parses every noncomment physical line in
+          # `script` and runs each one in a separate `sh -c`. Keep this input to
+          # one command. Variables, conditionals, and continued Flutter
+          # arguments must live in the invoked script so they share one shell.
+          #
+          # The script asks Android's alarm service to set the zone. That
+          # service writes `persist.sys.timezone` with system privilege, so
+          # there is no `adb root` restart to race the emulator's post-boot adb
+          # commands. Do not replace it with `adb root` plus `setprop`.
+          script: sh ../../../.github/scripts/android_device_test.sh
 
   # iOS, on a simulator. Narrower than the Android job on purpose: the macOS
   # cells in `test` already exercise `apple.dart` across three zones, so what
@@ -324,17 +305,24 @@ jobs:
 
       - run: flutter pub get
 
-      # Opportunistic, and deliberately not depended on. A simulator takes its
-      # zone from the host, so moving the host before booting one is the only
-      # lever there is, and if it lands this job runs against a half-hour
-      # offset whose IANA name is alias-prone rather than against plain UTC.
-      # If it does not land, nothing below cares. Same command as the macOS
-      # cells above, for the same reason.
-      - name: Nudge the host timezone before anything boots
+      # A simulator takes its zone from the host, so moving the host before
+      # booting one is the only lever there is. The target has to be spelled
+      # through Foundation's own zoneinfo root: it recovers the IANA name by
+      # stripping that prefix from the raw /etc/localtime target, and given
+      # /usr/share/zoneinfo (itself a symlink) it reads the right tzfile but
+      # cannot name it, so it falls back to GMT. That is what broke the macOS
+      # cells above, and the same wrong form here desynchronised libc from
+      # Foundation inside one process.
+      - name: Set the host timezone before anything boots
         env:
           ZONE: Asia/Kolkata
         run: |
-          sudo ln -sfh "/usr/share/zoneinfo/$ZONE" /etc/localtime
+          zone_file="/var/db/timezone/zoneinfo/$ZONE"
+          if [ ! -f "$zone_file" ]; then
+            echo "::error::no zone file for $ZONE in the macOS tzdata"
+            exit 1
+          fi
+          sudo ln -sfh "$zone_file" /etc/localtime
           date
 
       - name: Boot a simulator
