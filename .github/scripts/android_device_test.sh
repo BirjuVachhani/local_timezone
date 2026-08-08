@@ -23,6 +23,24 @@ while :; do
   sleep 1
 done
 
+# What the device came up in, before anything here touches it. An emulator
+# reports the host's zone to the guest as a NITZ telephony signal, and the time
+# zone detector applies it, so an untouched runner emulator sits in the runner's
+# zone rather than in some neutral default. `-timezone` in the job's emulator
+# options is what aims that signal at the zone this cell wants. When it lands
+# this already reads $ZONE and everything below is belt and braces; when it does
+# not, the detector is holding a different answer and the rest of this script is
+# load bearing again. Worth one line either way, because the difference is
+# invisible in every other part of the log.
+initial=$(adb shell getprop persist.sys.timezone | tr -d '\r')
+if [ "$initial" = "$ZONE" ]; then
+  echo "device booted into $ZONE already, so -timezone reached the guest"
+else
+  echo "::warning::device booted into '$initial' rather than $ZONE, so" \
+    "-timezone did not reach the guest and automatic detection is still" \
+    "holding '$initial' as its answer"
+fi
+
 # Otherwise the framework is free to resync the zone from the network partway
 # through and undo the value below.
 adb shell settings put global auto_time_zone 0
@@ -42,9 +60,58 @@ if [ "$actual" != "$ZONE" ]; then
   exit 1
 fi
 
+# The guard above is one reading taken seconds after boot, and the app does not
+# start for another seven minutes. The detector is awake for all of it, still
+# holding whatever the emulator suggested, and if it reasserts that the device
+# moves with nothing in this log to say so. Sample the two values that would
+# explain it, for as long as the run lasts, so a recurrence reports itself
+# instead of arriving as a mystery about the provider.
+started=$(date +%s)
+(
+  seen_zone=$ZONE
+  seen_auto=0
+  while :; do
+    sleep 5
+    state=$(adb shell 'getprop persist.sys.timezone; settings get global auto_time_zone' 2>/dev/null | tr -d '\r') || continue
+    zone_now=$(echo "$state" | sed -n 1p)
+    auto_now=$(echo "$state" | sed -n 2p)
+    if [ -n "$zone_now" ] && [ "$zone_now" != "$seen_zone" ]; then
+      echo "::warning::$(( $(date +%s) - started ))s in, the device zone went" \
+        "from '$seen_zone' to '$zone_now'"
+      seen_zone=$zone_now
+    fi
+    if [ -n "$auto_now" ] && [ "$auto_now" != "$seen_auto" ]; then
+      echo "::warning::$(( $(date +%s) - started ))s in, auto_time_zone went" \
+        "from '$seen_auto' to '$auto_now'"
+      seen_auto=$auto_now
+    fi
+  done
+) &
+watcher=$!
+
 # `EXPECTED_RAW` is the same string as `EXPECTED_ZONE` because the Android
 # provider returns the property verbatim as `raw`. The matrix entries are
 # primary IANA names, so canonicalization is a no-op for all three.
+rc=0
 flutter test integration_test -d "$ANDROID_SERIAL" \
   --dart-define=EXPECTED_ZONE="$ZONE" \
-  --dart-define=EXPECTED_RAW="$ZONE"
+  --dart-define=EXPECTED_RAW="$ZONE" || rc=$?
+
+kill "$watcher" 2>/dev/null || true
+wait "$watcher" 2>/dev/null || true
+
+# Read it back rather than inferring it from whether the suite was happy. A
+# device that moved under the run invalidates every assertion in it, and telling
+# that apart from a real regression is the difference between a broken harness
+# and a broken package. Checked even when the suite passed, because the Etc/UTC
+# cell expects the value the device would revert to and so cannot fail on this
+# by itself.
+final=$(adb shell getprop persist.sys.timezone | tr -d '\r')
+if [ "$final" != "$ZONE" ]; then
+  echo "::error::the device was in $ZONE when the run started and is in" \
+    "'$final' now, so it moved underneath the test and the result above says" \
+    "nothing about the provider. The warnings above give the time it moved."
+  exit 1
+fi
+
+exit "$rc"

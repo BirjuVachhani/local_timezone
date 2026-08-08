@@ -274,6 +274,23 @@ jobs:
           # write as a diagnostic fallback if the system-service path fails.
           target: google_apis
           arch: x86_64
+          # The action's own defaults, reproduced because this input replaces
+          # them rather than adding to them, plus the one that fixes a race.
+          #
+          # An emulator reports the host's zone to the guest as a NITZ
+          # telephony signal, and Android's time zone detector applies it like
+          # any other suggestion. A GitHub runner is UTC, so every cell here
+          # boots into Etc/UTC by that route and the script below then has to
+          # take it away again. Those two writes land within seconds of each
+          # other, and on 2026-08-08 one cell lost: the guard read
+          # America/Denver, the app read Etc/UTC seven minutes later, and the
+          # failure was indistinguishable from the provider being wrong.
+          # Pointing the signal at the zone the cell wants means the detector
+          # and the script agree on the answer, so it no longer matters which
+          # of them writes last.
+          emulator-options: >-
+            -no-window -gpu swiftshader_indirect -no-snapshot -noaudio
+            -no-boot-anim -timezone ${{ matrix.zone }}
           working-directory: packages/flutter_local_timezone/test_host
           # This action intentionally parses every noncomment physical line in
           # `script` and runs each one in a separate `sh -c`. Keep this input to
