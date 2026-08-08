@@ -204,6 +204,24 @@ void main() {
     // observable symptom, so it is the only way to test for it.
     const iterations = 500000;
     LocalTimezone.getTimeZoneName(); // warm up lazy statics
+
+    // Two batches, and only the second is measured. Calling this at all makes
+    // the heap and the allocator grow once, to a size that depends on the
+    // machine rather than on the call count: measured over a single batch, the
+    // same loop grows RSS by 0.3 MB on one host and 8.1 MB on another, and by
+    // no more at 4M calls than at 500k. That number is a property of the
+    // runner, not of the code under test, so an absolute bound on it is really
+    // a bound on how noisy CI is allowed to be.
+    //
+    // The first batch pays that cost. By the second, the only thing left that
+    // can still move RSS is an allocation that is never released, which is
+    // exactly the bug. Measured this way the second batch stays at 0.0 MB in
+    // JIT and AOT alike, so the bound below has roughly two orders of
+    // magnitude of headroom over the noise and still sits well under the 28 MB
+    // a real leak would produce.
+    for (var i = 0; i < iterations; i++) {
+      LocalTimezone.getTimeZoneName();
+    }
     final before = ProcessInfo.currentRss;
     for (var i = 0; i < iterations; i++) {
       LocalTimezone.getTimeZoneName();
@@ -212,10 +230,11 @@ void main() {
 
     expect(
       growthMb,
-      lessThan(8),
+      lessThan(4),
       reason:
-          'RSS grew ${growthMb.toStringAsFixed(1)} MB over $iterations calls, '
-          'which suggests the autorelease pool is missing or mismatched',
+          'RSS grew ${growthMb.toStringAsFixed(1)} MB over $iterations calls '
+          'that should have allocated nothing lasting, which suggests the '
+          'autorelease pool is missing or mismatched',
     );
   }, timeout: const Timeout(Duration(minutes: 2)));
 }

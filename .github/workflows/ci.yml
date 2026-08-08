@@ -296,6 +296,11 @@ jobs:
     name: ios simulator
     runs-on: macos-15
     timeout-minutes: 45
+    # One zone for the whole job. The step below configures the host and the
+    # test step asserts the result, and those two only mean anything while they
+    # agree, so they read the same variable rather than two literals.
+    env:
+      ZONE: Asia/Kolkata
     steps:
       - uses: actions/checkout@v7
 
@@ -314,8 +319,6 @@ jobs:
       # cells above, and the same wrong form here desynchronised libc from
       # Foundation inside one process.
       - name: Set the host timezone before anything boots
-        env:
-          ZONE: Asia/Kolkata
         run: |
           zone_file="/var/db/timezone/zoneinfo/$ZONE"
           if [ ! -f "$zone_file" ]; then
@@ -348,21 +351,28 @@ jobs:
           fi
           echo "SIM_UDID=$udid" >> "$GITHUB_ENV"
 
-      # No `EXPECTED_ZONE`, unlike Android. Nothing puts a simulator into a
-      # chosen zone: `simctl` has no timezone command, and both
-      # `SIMCTL_CHILD_TZ` and `launchctl setenv TZ` inside the device were
-      # tried and neither reaches Foundation. Asserting a zone here would
-      # therefore be asserting that the nudge above worked, which is not
-      # something this package controls.
+      # `integration_test`, never `../integration_test`. `flutter test` selects
+      # its device backend only for paths starting with `<cwd>/integration_test`,
+      # and a path that fails that check is not an error: the run silently falls
+      # back to `flutter_tester` on this host, ignores `-d`, builds no app, and
+      # never loads `apple.dart` at all. It then passes. That green is the one
+      # failure mode this job cannot detect on its own, so the path matters more
+      # here than anywhere else in the file. The directory holds a single file
+      # that delegates to the suite in the package above it.
       #
-      # The round trip case carries the job instead, and it needs nothing
-      # injected: whatever zone the simulator reports has to agree with the
-      # simulator's own clock, so a well formed but wrong identifier still
-      # fails. The zone that was actually resolved is printed by the first
-      # test, so the log says which one ran.
+      # Asserting the zone is sound despite `simctl` having no timezone command.
+      # A simulator does not copy the host's zone, it reads the host's file:
+      # `/etc/localtime` inside the device and on the host are the same inode,
+      # so the symlink written above is what Foundation resolves inside the app.
+      # `EXPECTED_RAW` matches `EXPECTED_ZONE` because Foundation reports the
+      # tail of that symlink verbatim and the zone above is already the primary
+      # spelling, so canonicalization is a no-op.
       - name: flutter test (iOS simulator)
         working-directory: packages/flutter_local_timezone/test_host
-        run: flutter test ../integration_test -d "$SIM_UDID"
+        run: |
+          flutter test integration_test -d "$SIM_UDID" \
+            --dart-define=EXPECTED_ZONE="$ZONE" \
+            --dart-define=EXPECTED_RAW="$ZONE"
 
   # `environment: sdk: ^3.12.0` in the pubspec is a promise to callers. Without
   # this job the promise is only ever checked against whatever `stable`
