@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:meta/meta.dart';
@@ -5,6 +6,7 @@ import 'package:meta/meta.dart';
 import '../local_timezone_exception.dart';
 import '../provider/provider_base.dart';
 import '../resolved_local_timezone.dart';
+import '../zone_name.dart';
 
 /// Where the symlink lands, and the marker that separates the database root
 /// from the zone name inside it.
@@ -22,10 +24,6 @@ const _zoneinfoMarkers = ['zoneinfo.default/', 'zoneinfo/'];
 /// digit after a sign, and must not be caught.
 final _posixRule = RegExp(r'^[A-Za-z]{3,}[+-]?\d');
 
-/// A plausible zone name: letters, digits, and the punctuation tzdb actually
-/// uses, in slash-separated components.
-final _zoneName = RegExp(r'^[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+)*$');
-
 /// Subtrees that sit between the database root and the zone name.
 ///
 /// Many distributions ship `zoneinfo/posix/...` and `zoneinfo/right/...`
@@ -33,6 +31,10 @@ final _zoneName = RegExp(r'^[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+)*$');
 /// into either yields a path whose tail is `posix/Asia/Kolkata`, which is not
 /// an identifier anything will accept.
 const _zoneinfoSubtrees = ['posix/', 'right/'];
+
+/// The most `/etc/timezone` can hold and still be a zone name. The longest in
+/// tzdb is 30 bytes, so this is generous by an order of magnitude.
+const _maxTimezoneFileBytes = 256;
 
 /// A [Provider] that reads the local timezone from the filesystem.
 ///
@@ -80,7 +82,7 @@ class LinuxProvider extends Provider {
       final name = zoneFromPath(link);
       if (name != null) return _named(name, link);
       _unavailable(
-        '/etc/localtime resolves to "$link", which contains no zoneinfo '
+        '/etc/localtime resolves to `$link`, which contains no zoneinfo '
         'directory to take a zone name from',
       );
     }
@@ -133,10 +135,38 @@ class LinuxProvider extends Provider {
     }
   }
 
+  /// Reads `/etc/timezone`, bounded.
+  ///
+  /// The file holds one zone name, so the longest legitimate content is around
+  /// 30 bytes. Both bounds guard the same thing from different directions: the
+  /// type check because reading a FIFO planted at this path would block the
+  /// isolate forever, and the byte cap because a large regular file would
+  /// otherwise be pulled into memory in full before being rejected as not a
+  /// zone name. Neither is reachable without write access to `/etc`, but a
+  /// timezone lookup is not a good place to find that out.
+  ///
+  /// The type check is not race-free, and cannot be made so here. Something
+  /// that replaces the file with a FIFO between the check and the open still
+  /// blocks, because `dart:io` offers no way to open with `O_NONBLOCK` and no
+  /// way to stat an already-open handle. Closing it properly needs FFI to
+  /// `open` and `fstat`, which is a real cost for a race that already requires
+  /// write access to `/etc`. The check is kept because it costs nothing and
+  /// handles the case where the FIFO is simply already there.
   String? _readTimezoneFile() {
+    const path = '/etc/timezone';
     try {
-      final file = File('/etc/timezone');
-      return file.existsSync() ? file.readAsStringSync() : null;
+      if (FileSystemEntity.typeSync(path) != FileSystemEntityType.file) {
+        return null;
+      }
+      final handle = File(path).openSync();
+      try {
+        final bytes = handle.readSync(_maxTimezoneFileBytes + 1);
+        // Filled the cap, so the content is longer than any zone name.
+        if (bytes.length > _maxTimezoneFileBytes) return null;
+        return utf8.decode(bytes, allowMalformed: true);
+      } finally {
+        handle.closeSync();
+      }
     } on FileSystemException {
       return null;
     }
@@ -175,7 +205,7 @@ String? zoneFromTz(String tz) {
   }
 
   if (_posixRule.hasMatch(value)) return null;
-  return _zoneName.hasMatch(value) ? value : null;
+  return isPlausibleZoneName(value) ? value : null;
 }
 
 /// Where [marker] begins in [path], but only where it starts a whole path
@@ -195,6 +225,12 @@ int _componentIndex(String path, String marker) {
 ///
 /// Handles relative link targets, which are mainstream: Rocky and Fedora write
 /// `../usr/share/zoneinfo/Asia/Kolkata` rather than an absolute path.
+///
+/// The tail is validated as an identifier rather than returned verbatim. What
+/// sits after the marker is whatever the symlink pointed at, so without the
+/// check a link to `/usr/share/zoneinfo/../../etc/shadow` would be reported as
+/// a zone named `../../etc/shadow`, and a name containing a newline would carry
+/// straight into [NamedLocalTimezone.name] and any log written from it.
 @visibleForTesting
 String? zoneFromPath(String path) {
   for (final marker in _zoneinfoMarkers) {
@@ -210,7 +246,7 @@ String? zoneFromPath(String path) {
         break;
       }
     }
-    return name.isEmpty ? null : name;
+    return isPlausibleZoneName(name) ? name : null;
   }
   return null;
 }
@@ -224,5 +260,5 @@ String? zoneFromPath(String path) {
 String? zoneFromTimezoneFile(String contents) {
   final value = contents.trim();
   if (value.isEmpty) return null;
-  return _zoneName.hasMatch(value) ? value : null;
+  return isPlausibleZoneName(value) ? value : null;
 }

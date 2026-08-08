@@ -54,6 +54,26 @@ Map<String, String> parseLinks(String source) {
   return links;
 }
 
+/// Characters that would end, escape or interpolate out of the Dart string
+/// literal these values are emitted into.
+///
+/// The generated file is compiled into the package, so an upstream value
+/// containing a quote would not merely corrupt the table: it would inject
+/// arbitrary top-level Dart. Both sources are trusted and no current entry
+/// comes close to this, which is exactly why it has to be checked rather than
+/// assumed.
+final _unsafeInLiteral = RegExp(r"['\\$]|[\x00-\x1f\x7f]");
+
+/// Fails loudly rather than emitting something that could inject code.
+void _rejectUnsafe(Iterable<String> values, String what) {
+  final unsafe = values.where(_unsafeInLiteral.hasMatch).toList();
+  if (unsafe.isEmpty) return;
+  throw StateError(
+    'Refusing to generate: $what contains characters that would break out of '
+    'a Dart string literal: ${unsafe.map((v) => v.codeUnits).join(', ')}',
+  );
+}
+
 Future<void> main() async {
   final version = (await _fetch('$_repository/version')).trim();
 
@@ -77,6 +97,10 @@ Future<void> main() async {
     exitCode = 1;
     return;
   }
+
+  _rejectUnsafe([version], 'the tzdb version');
+  _rejectUnsafe(links.keys, 'an alias name');
+  _rejectUnsafe(links.values, 'a target zone name');
 
   final sorted = links.keys.toList()..sort();
   final buffer = StringBuffer()

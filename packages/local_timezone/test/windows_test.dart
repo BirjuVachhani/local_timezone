@@ -1,9 +1,16 @@
-// Mapping and decoding only. Both are pure, so they run anywhere, and
-// importing the library off Windows is safe because the kernel32 bindings are
-// lazy top-level finals that nothing here touches.
+// Mapping and decoding only. Both are pure, so they run on every native
+// platform, and importing the library off Windows is safe because the kernel32
+// bindings are lazy top-level finals that nothing here touches.
+//
+// `vm` is still required. Laziness keeps the bindings from *running*
+// elsewhere, but `dart:ffi` has no dart2js implementation, so the file fails to
+// compile for the browser and for Node rather than failing at runtime.
 //
 // The GetDynamicTimeZoneInformation call itself is exercised by CI on a real
 // Windows runner.
+@TestOn('vm')
+library;
+
 import 'package:local_timezone/src/canonicalize.dart';
 import 'package:local_timezone/src/platform/windows.dart';
 import 'package:local_timezone/src/windows_zones.g.dart';

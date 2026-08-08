@@ -1,0 +1,213 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Weekly. `pubspec.lock` is deliberately not committed, so every run
+    # resolves fresh. This is what catches a `timezone` or `test` release that
+    # breaks the suite with nobody having pushed anything.
+    - cron: "23 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # Formatting and analysis for the whole workspace. Needs Flutter, because
+  # `flutter_local_timezone` is a workspace member and `dart pub get` refuses to
+  # resolve a workspace that contains a Flutter package.
+  analyze:
+    name: format + analyze
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - run: flutter pub get
+
+      - name: dart format
+        run: dart format --output=none --set-exit-if-changed .
+
+      - name: flutter analyze
+        run: flutter analyze
+
+  # The real matrix: every OS and CPU architecture the package claims, crossed
+  # with a handful of system timezones.
+  #
+  # The timezone axis is the point of the job rather than a bonus. GitHub
+  # runners are all UTC, and under UTC the Windows and Linux providers barely
+  # do any work: no CLDR key gets mapped, no `backward` alias gets rewritten,
+  # and a provider that always answered "UTC" would pass. Setting the system
+  # zone is the only way to reach `GetDynamicTimeZoneInformation` and
+  # `/etc/localtime` with something interesting in them.
+  test:
+    name: ${{ matrix.target.label }} · ${{ matrix.zone.iana }}
+    runs-on: ${{ matrix.target.runner }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - { runner: ubuntu-24.04, arch: x64, label: linux-x64 }
+          - { runner: ubuntu-24.04-arm, arch: arm64, label: linux-arm64 }
+          - { runner: macos-15-intel, arch: x64, label: macos-x64 }
+          - { runner: macos-15, arch: arm64, label: macos-arm64 }
+          - { runner: windows-2025, arch: x64, label: windows-x64 }
+          - { runner: windows-11-arm, arch: arm64, label: windows-arm64 }
+        zone:
+          # `Etc/UTC` rather than `UTC`, deliberately. `UTC` is a `backward`
+          # alias, so canonicalization rewrites it to `Etc/UTC` and the macOS
+          # symlink assertion would then compare a canonical name against a raw
+          # one. `Etc/UTC` is already primary, so every layer agrees.
+          - { iana: Etc/UTC, windows: UTC }
+          # A half-hour offset with no DST, and the sharpest CLDR case there
+          # is: the Windows key maps to the *deprecated* `Asia/Calcutta`, so
+          # this cell is the one that proves canonicalization runs on Windows.
+          - { iana: Asia/Kolkata, windows: India Standard Time }
+          # A negative offset that observes DST.
+          - { iana: America/Denver, windows: Mountain Standard Time }
+    steps:
+      - uses: actions/checkout@v7
+
+      # `local_timezone` has no Flutter dependency, but it shares a pub
+      # workspace with a package that does, and `dart pub get` fails on the
+      # whole workspace because of it. Flutter ships x64 archives only for
+      # Linux and Windows, so installing it here would cost the arm64 half of
+      # this matrix. Dart itself has first class arm64 builds on all three
+      # operating systems, so the workspace member goes and Flutter stays out.
+      # This is an ephemeral checkout; nothing is being deleted that matters.
+      - name: Take the Flutter package out of the workspace
+        run: rm -rf packages/flutter_local_timezone
+
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+          # Explicit rather than inferred, so a runner image that quietly
+          # changed architecture fails here instead of testing the wrong one.
+          architecture: ${{ matrix.target.arch }}
+
+      - name: Confirm the SDK is native
+        run: dart --version
+
+      - name: Set the system timezone (Linux)
+        if: runner.os == 'Linux'
+        env:
+          ZONE: ${{ matrix.zone.iana }}
+        run: |
+          sudo timedatectl set-timezone "$ZONE"
+          actual=$(timedatectl show --property=Timezone --value)
+          if [ "$actual" != "$ZONE" ]; then
+            echo "::error::wanted $ZONE, timedatectl reports $actual"
+            exit 1
+          fi
+
+      - name: Set the system timezone (macOS)
+        if: runner.os == 'macOS'
+        env:
+          ZONE: ${{ matrix.zone.iana }}
+        run: |
+          sudo systemsetup -settimezone "$ZONE"
+          # Verified against the symlink rather than against `systemsetup
+          # -gettimezone`, because the symlink is what Foundation and the test
+          # suite both actually read.
+          actual=$(readlink /etc/localtime)
+          case "$actual" in
+            */"$ZONE") ;;
+            *)
+              echo "::error::wanted $ZONE, /etc/localtime points at $actual"
+              exit 1
+              ;;
+          esac
+
+      - name: Set the system timezone (Windows)
+        if: runner.os == 'Windows'
+        # pwsh, not bash: Git Bash rewrites the `/s` flag into a path.
+        shell: pwsh
+        env:
+          WINDOWS_ZONE: ${{ matrix.zone.windows }}
+        run: |
+          tzutil /s "$env:WINDOWS_ZONE"
+          $actual = (tzutil /g).Trim()
+          if ($actual -ne $env:WINDOWS_ZONE) {
+            Write-Output "::error::wanted $env:WINDOWS_ZONE, tzutil reports $actual"
+            exit 1
+          }
+
+      - run: dart pub get
+
+      - name: dart test
+        working-directory: packages/local_timezone
+        run: dart test
+
+  # The web providers, on both compilers and both runtimes. No architecture
+  # axis: the package compiles to JavaScript or to Wasm here, so the host CPU
+  # is not part of what is under test.
+  #
+  # `TZ` is enough on this job, unlike the native one. Chrome and Node both
+  # honour it, and no web test compares against `/etc/localtime`, so there is
+  # nothing to desynchronise.
+  web:
+    name: web · ${{ matrix.zone }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      TZ: ${{ matrix.zone }}
+    strategy:
+      fail-fast: false
+      matrix:
+        zone: [Etc/UTC, Asia/Kolkata, America/Denver]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Take the Flutter package out of the workspace
+        run: rm -rf packages/flutter_local_timezone
+
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+
+      - run: dart pub get
+
+      - name: dart test (Chrome, dart2js and dart2wasm)
+        working-directory: packages/local_timezone
+        run: dart test -p chrome -c dart2js -c dart2wasm
+
+      - name: dart test (Node)
+        working-directory: packages/local_timezone
+        run: dart test -p node
+
+  # `environment: sdk: ^3.12.0` in the pubspec is a promise to callers. Without
+  # this job the promise is only ever checked against whatever `stable`
+  # happens to be.
+  min-sdk:
+    name: minimum supported SDK
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Take the Flutter package out of the workspace
+        run: rm -rf packages/flutter_local_timezone
+
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: "3.12.0"
+
+      - run: dart pub get
+
+      - name: dart test
+        working-directory: packages/local_timezone
+        run: dart test

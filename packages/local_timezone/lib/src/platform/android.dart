@@ -6,6 +6,7 @@ import 'package:meta/meta.dart';
 import '../local_timezone_exception.dart';
 import '../provider/provider_base.dart';
 import '../resolved_local_timezone.dart';
+import '../zone_name.dart';
 
 /// The property Android stores the device timezone in, and the one bionic's
 /// own `tzset` reads. Present since API 4.
@@ -65,8 +66,19 @@ class AndroidProvider extends Provider {
 
     if (_offsetish.hasMatch(reported)) {
       _unavailable(
-        '$_property holds "$reported", which is not a zone name '
+        '$_property holds `$reported`, which is not a zone name '
         'and not a legal GMT offset',
+      );
+    }
+
+    // The property is decoded leniently, so corrupt bytes arrive here as
+    // replacement characters rather than as a thrown FormatException. Neither
+    // of those should become a timezone: report it unusable instead of handing
+    // back a name that no database will accept and that only fails later,
+    // somewhere with less context than this.
+    if (!isPlausibleZoneName(reported)) {
+      _unavailable(
+        '$_property holds `$reported`, which is not shaped like a zone name',
       );
     }
 
@@ -139,18 +151,32 @@ final _PropertyGetDart _propertyGet = _libc
 
 typedef _MallocNative = Pointer<Uint8> Function(IntPtr);
 typedef _MallocDart = Pointer<Uint8> Function(int);
-typedef _FreeNative = Void Function(Pointer<Uint8>);
-typedef _FreeDart = void Function(Pointer<Uint8>);
 
 final _MallocDart _malloc = _libc.lookupFunction<_MallocNative, _MallocDart>(
   'malloc',
 );
-final _FreeDart _free = _libc.lookupFunction<_FreeNative, _FreeDart>('free');
+
+/// Allocates [bytes], failing with a Dart exception rather than handing back
+/// the null pointer `malloc` returns when it cannot.
+///
+/// Both allocations here are tiny and this is effectively unreachable, but
+/// writing through a null `Pointer` would segfault the process instead of
+/// throwing, so it is worth the branch.
+Pointer<Uint8> _allocate(int bytes) {
+  final pointer = _malloc(bytes);
+  if (pointer == nullptr) {
+    throw LocalTimezoneUnavailableException(
+      platform: 'android',
+      reason: 'malloc($bytes) failed',
+    );
+  }
+  return pointer;
+}
 
 /// The property name as a C string, encoded once.
 final Pointer<Uint8> _propertyName = () {
   final bytes = utf8.encode(_property);
-  final pointer = _malloc(bytes.length + 1);
+  final pointer = _allocate(bytes.length + 1);
   pointer.asTypedList(bytes.length + 1)
     ..setRange(0, bytes.length, bytes)
     ..[bytes.length] = 0;
@@ -163,19 +189,23 @@ final Pointer<Uint8> _propertyName = () {
 /// single-threaded, so two reads can never be in this buffer at the same time.
 /// [AndroidProvider.resolve] is synchronous and never yields, which is what
 /// keeps that true.
-final Pointer<Uint8> _valueBuffer = _malloc(_propValueMax);
+///
+/// Never freed, deliberately. It is one 92-byte allocation for the life of the
+/// isolate, and a release hook would only add a way to free it while a later
+/// read still expects it to be there.
+final Pointer<Uint8> _valueBuffer = _allocate(_propValueMax);
 
 String _readProperty() {
   final length = _propertyGet(_propertyName, _valueBuffer);
   if (length <= 0) return '';
-  return utf8.decode(_valueBuffer.asTypedList(length));
-}
 
-/// Releases the process-lifetime buffers. Only for tests that want a clean
-/// heap; the buffers are two small allocations that normally live as long as
-/// the isolate.
-@visibleForTesting
-void releaseAndroidBuffers() {
-  _free(_propertyName);
-  _free(_valueBuffer);
+  // bionic will not write more than PROP_VALUE_MAX, so this clamp should never
+  // bite. It is here because the alternative to trusting that return value is
+  // reading off the end of a 92-byte buffer.
+  final safe = length < _propValueMax ? length : _propValueMax;
+
+  // The property is system-owned and always ASCII in practice. Decoding
+  // leniently means a corrupt one degrades to a name that fails to match
+  // rather than throwing a FormatException out of an unrelated call stack.
+  return utf8.decode(_valueBuffer.asTypedList(safe), allowMalformed: true);
 }

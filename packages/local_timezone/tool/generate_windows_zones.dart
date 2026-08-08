@@ -39,6 +39,26 @@ Future<String> _fetch(String url) async {
   }
 }
 
+/// Characters that would end, escape or interpolate out of the Dart string
+/// literal these values are emitted into.
+///
+/// The generated file is compiled into the package, so an upstream value
+/// containing a quote would not merely corrupt the table: it would inject
+/// arbitrary top-level Dart. Both sources are trusted and no current entry
+/// comes close to this, which is exactly why it has to be checked rather than
+/// assumed.
+final _unsafeInLiteral = RegExp(r"['\\$]|[\x00-\x1f\x7f]");
+
+/// Fails loudly rather than emitting something that could inject code.
+void _rejectUnsafe(Iterable<String> values, String what) {
+  final unsafe = values.where(_unsafeInLiteral.hasMatch).toList();
+  if (unsafe.isEmpty) return;
+  throw StateError(
+    'Refusing to generate: $what contains characters that would break out of '
+    'a Dart string literal: ${unsafe.map((v) => v.codeUnits).join(', ')}',
+  );
+}
+
 Future<void> main() async {
   final json = jsonDecode(await _fetch(_source)) as Map<String, dynamic>;
   final supplemental = json['supplemental'] as Map<String, dynamic>;
@@ -85,6 +105,12 @@ Future<void> main() async {
     exitCode = 1;
     return;
   }
+
+  _rejectUnsafe([version], 'the CLDR version');
+  _rejectUnsafe(defaults.keys, 'a Windows zone key');
+  _rejectUnsafe(defaults.values, 'an IANA zone name');
+  _rejectUnsafe(byTerritory.keys, 'a Windows zone key and region');
+  _rejectUnsafe(byTerritory.values, 'an IANA zone name');
 
   final buffer = StringBuffer()
     ..writeln('// GENERATED CODE - DO NOT MODIFY BY HAND')

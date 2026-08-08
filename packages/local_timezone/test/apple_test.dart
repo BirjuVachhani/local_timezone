@@ -1,4 +1,6 @@
-@TestOn('mac-os')
+// `vm` as well as `mac-os`, because the node platform reports the host OS and
+// would otherwise select this file, where `dart:io` does not compile.
+@TestOn('vm && mac-os')
 library;
 
 import 'dart:io';

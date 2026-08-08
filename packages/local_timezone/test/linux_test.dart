@@ -1,10 +1,18 @@
-// Resolution logic only. These functions are pure, so they run anywhere, and
-// importing the library off Linux is safe because nothing here touches the
-// filesystem.
+// Resolution logic only. These functions are pure, so they run on every native
+// platform, and importing the library off Linux is safe because nothing here
+// touches the filesystem.
+//
+// `vm` is still required, because the provider imports `dart:io` and that has
+// no dart2js implementation, so the file fails to compile for the browser and
+// for Node rather than failing at runtime.
 //
 // The syscall wiring is exercised by CI on a real Linux runner; the parsing,
 // which is where the bugs live, is covered here against fixtures taken from
 // real distributions.
+@TestOn('vm')
+library;
+
+import 'package:local_timezone/src/backward.g.dart';
 import 'package:local_timezone/src/platform/linux.dart';
 import 'package:test/test.dart';
 
@@ -84,6 +92,39 @@ void main() {
         expect(zoneFromPath(input), isNull);
       });
     }
+
+    // What follows the marker is whatever the symlink pointed at, so it is
+    // validated as an identifier rather than returned verbatim. Writing
+    // /etc/localtime needs root, so none of these is a privilege boundary;
+    // the point is that a lookup should not report a zone named
+    // `../../etc/shadow`, nor carry a newline into a log line.
+    group('a tail that is not an identifier is rejected', () {
+      for (final input in const [
+        '/usr/share/zoneinfo/../../etc/shadow',
+        '/usr/share/zoneinfo/..',
+        '/usr/share/zoneinfo/Asia/Kolkata\nWARN forged',
+        '/usr/share/zoneinfo/Asia Kolkata',
+        '/usr/share/zoneinfo/Asia/Kolkata;rm -rf /',
+        '/usr/share/zoneinfo//Asia/Kolkata',
+        '/usr/share/zoneinfo/Asia/',
+        '/usr/share/zoneinfo/1Asia/Kolkata', // must start with a letter
+      ]) {
+        test(input.replaceAll('\n', r'\n'), () {
+          expect(zoneFromPath(input), isNull);
+        });
+      }
+    });
+
+    test('every zone name tzdb ships still survives the validation', () {
+      // The guard above is only worth having if it rejects nothing real.
+      for (final name in [...backwardLinks.keys, ...backwardLinks.values]) {
+        expect(
+          zoneFromPath('/usr/share/zoneinfo/$name'),
+          name,
+          reason: '$name is a real tzdb name and must not be rejected',
+        );
+      }
+    });
 
     // Most distributions ship these subtrees alongside the top-level names,
     // `right` being the leap-second build. A link into either names the same

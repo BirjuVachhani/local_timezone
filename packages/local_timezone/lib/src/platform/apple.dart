@@ -4,6 +4,7 @@ import 'dart:ffi';
 import '../local_timezone_exception.dart';
 import '../provider/provider_base.dart';
 import '../resolved_local_timezone.dart';
+import '../zone_name.dart';
 
 /// The name CoreFoundation gives a zone it built from a bare offset.
 ///
@@ -156,8 +157,18 @@ class AppleProvider extends Provider {
 
       if (_offsetish.hasMatch(identifier)) {
         _unavailable(
-          '-[NSTimeZone name] returned "$identifier", which is not a zone '
+          '-[NSTimeZone name] returned `$identifier`, which is not a zone '
           'name and not a fixed offset',
+        );
+      }
+
+      // The C string is decoded leniently, so bytes that are not valid UTF-8
+      // arrive here as replacement characters rather than throwing. Neither
+      // those nor anything else unnameable should become a timezone.
+      if (!isPlausibleZoneName(identifier)) {
+        _unavailable(
+          '-[NSTimeZone name] returned `$identifier`, which is not shaped '
+          'like a zone name',
         );
       }
 
@@ -244,11 +255,39 @@ final _PoolPopDart _poolPop = _process
 Pointer<Uint8> _toCString(String value) {
   final bytes = utf8.encode(value);
   final pointer = _malloc(bytes.length + 1);
+  if (pointer == nullptr) {
+    throw LocalTimezoneUnavailableException(
+      platform: 'apple',
+      reason: 'malloc(${bytes.length + 1}) failed',
+    );
+  }
   pointer.asTypedList(bytes.length + 1)
     ..setRange(0, bytes.length, bytes)
     ..[bytes.length] = 0;
   return pointer;
 }
+
+/// The longest C string [_fromCString] will scan for a terminator.
+///
+/// Only zone names come back this way, and the longest tzdb name is 30 bytes,
+/// so this is three orders of magnitude of headroom.
+///
+/// Worth being precise about what this does and does not buy. It is a scan
+/// bound, not a bounds check: nothing here can establish how large the
+/// allocation behind the pointer actually is, so a pointer to an unterminated
+/// two-byte buffer would still be read past its end before the cap stops it.
+/// What the cap removes is the unbounded case, where a missing terminator
+/// walks the scan through the whole address space until it faults.
+///
+/// The real guarantee is Foundation's: `-[NSString UTF8String]` is documented
+/// to return a NUL-terminated representation, and the value it describes is a
+/// zone name. Eliminating the assumption rather than bounding it would mean
+/// switching to `-getCString:maxLength:encoding:`, which writes into a buffer
+/// this package owns and whose length it therefore knows. That is a better
+/// shape and worth doing if this code is ever revisited; it is not done here
+/// because it changes a message signature and a well-tested path to close a
+/// gap that Foundation's own contract already closes.
+const _maxCStringLength = 4096;
 
 /// Copies a NUL-terminated C string into a Dart string.
 ///
@@ -257,10 +296,18 @@ Pointer<Uint8> _toCString(String value) {
 /// the string is, and must never be freed by us.
 String _fromCString(Pointer<Uint8> pointer) {
   var length = 0;
-  while (pointer[length] != 0) {
+  while (length < _maxCStringLength && pointer[length] != 0) {
     length++;
   }
-  return utf8.decode(pointer.asTypedList(length));
+  if (length == _maxCStringLength) {
+    throw const LocalTimezoneUnavailableException(
+      platform: 'apple',
+      reason:
+          'the zone name was not NUL-terminated within $_maxCStringLength '
+          'bytes',
+    );
+  }
+  return utf8.decode(pointer.asTypedList(length), allowMalformed: true);
 }
 
 /// Runs [action] with [value] as a temporary C string, then frees it.

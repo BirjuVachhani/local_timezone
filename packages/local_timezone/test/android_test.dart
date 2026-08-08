@@ -1,9 +1,16 @@
-// Parser tests only. `parseJavaCustomId` is pure, so it runs anywhere, and
-// importing the library is safe off-Android because the FFI bindings are lazy
-// top-level finals that nothing here touches.
+// Parser tests only. `parseJavaCustomId` is pure, so it runs on every native
+// platform, and importing the library is safe off-Android because the FFI
+// bindings are lazy top-level finals that nothing here touches.
+//
+// `vm` is still required. Laziness keeps the bindings from *running*
+// elsewhere, but `dart:ffi` has no dart2js implementation, so the file fails to
+// compile for the browser and for Node rather than failing at runtime.
 //
 // The FFI path itself is exercised on a real emulator, which is the only place
 // `persist.sys.timezone` exists.
+@TestOn('vm')
+library;
+
 import 'package:local_timezone/src/platform/android.dart';
 import 'package:test/test.dart';
 

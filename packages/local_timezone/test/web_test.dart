@@ -17,12 +17,23 @@ void main() {
     if (resolved is! NamedLocalTimezone) return;
 
     expect(resolved.name, isNotEmpty);
+    // Only `canonicalized` is rewritten. `name` deliberately keeps the
+    // engine's own spelling, and on Chrome that spelling is the deprecated
+    // one: V8 takes its zone names from ICU, whose stable-ID policy keeps
+    // `Asia/Calcutta` canonical. So an alias in `name` is the expected case
+    // here, not a failure, and asserting otherwise would be asserting that
+    // Chrome reports something it does not.
     expect(
-      backwardLinks.containsKey(resolved.name),
+      backwardLinks.containsKey(resolved.canonicalized),
       isFalse,
       reason:
-          '${resolved.name} is a deprecated alias and should have been '
-          'rewritten to ${backwardLinks[resolved.name]}',
+          '${resolved.canonicalized} is a deprecated alias and should have '
+          'been rewritten to ${backwardLinks[resolved.canonicalized]}',
+    );
+    expect(
+      resolved.canonicalized,
+      backwardLinks[resolved.name] ?? resolved.name,
+      reason: 'canonicalized must be exactly one backward-link hop from name',
     );
   });
 

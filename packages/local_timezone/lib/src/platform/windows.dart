@@ -54,7 +54,7 @@ class WindowsProvider extends Provider {
     final iana = windowsZoneToIana(key, region: _readRegion());
     if (iana == null) {
       _unavailable(
-        'no CLDR mapping for the Windows zone key "$key" (bundled CLDR '
+        'no CLDR mapping for the Windows zone key `$key` (bundled CLDR '
         '$windowsZonesCldrVersion)',
       );
     }

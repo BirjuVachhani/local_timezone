@@ -1,3 +1,4 @@
+import 'describe.dart';
 import 'resolved_local_timezone.dart';
 
 /// The base type for every failure this package reports.
@@ -67,10 +68,19 @@ final class LocalTimezoneUnavailableException extends LocalTimezoneException {
   /// when the web reported the literal string `Etc/Unknown`.
   final String? raw;
 
+  /// Every component is rendered through `describe`, not just [raw].
+  ///
+  /// [reason] is built by this package's own providers, but they build it by
+  /// interpolating the value the platform gave them, so it is as untrusted as
+  /// [raw] is. Sanitizing here rather than at each provider means there is one
+  /// place to get right instead of five, and it also covers an exception a
+  /// caller constructed themselves. The providers delimit values with
+  /// backticks, which pass through untouched.
   @override
   String get message =>
-      'No IANA timezone could be resolved on $platform: $reason'
-      '${raw == null ? '' : ' (platform reported "$raw")'}';
+      'No IANA timezone could be resolved on ${describe(platform)}: '
+      '${describe(reason)}'
+      '${raw == null ? '' : ' (platform reported `${describe(raw!)}`)'}';
 }
 
 /// The platform reported a fixed offset where a zone name was requested.
@@ -98,5 +108,5 @@ final class LocalTimezoneNotNamedException extends LocalTimezoneException {
   @override
   String get message =>
       'The platform reported the fixed offset ${resolved.iso8601} '
-      '("${resolved.raw}") rather than an IANA timezone name';
+      '(`${describe(resolved.raw)}`) rather than an IANA timezone name';
 }
