@@ -3,6 +3,7 @@ import 'dart:js_interop';
 import '../local_timezone_exception.dart';
 import '../provider/provider_base.dart';
 import '../resolved_local_timezone.dart';
+import '../zone_name.dart';
 
 /// Matches the offset forms an engine can report, with or without a
 /// designator: `+05:30` and `-08:00` from V8, `GMT+05:00` from
@@ -75,6 +76,16 @@ class WebProvider extends Provider {
         offset: DateTime.now().timeZoneOffset,
         raw: reported,
         prefix: offset.group(1),
+      );
+    }
+
+    // ECMA-262 requires this be a primary time zone identifier or an offset,
+    // but nothing enforces that at runtime and `Intl` is a mutable global that
+    // any script on the page can replace. Reject rather than pass a non-name
+    // off as a zone.
+    if (!isPlausibleZoneName(reported)) {
+      _unavailable(
+        'Intl reported "$reported", which is not shaped like a zone name',
       );
     }
 

@@ -6,6 +6,7 @@ import '../local_timezone_exception.dart';
 import '../provider/provider_base.dart';
 import '../resolved_local_timezone.dart';
 import '../windows_zones.g.dart';
+import '../zone_name.dart';
 
 /// `GetDynamicTimeZoneInformation` returns this when it fails.
 const _timeZoneIdInvalid = 0xFFFFFFFF;
@@ -56,6 +57,17 @@ class WindowsProvider extends Provider {
       _unavailable(
         'no CLDR mapping for the Windows zone key "$key" (bundled CLDR '
         '$windowsZonesCldrVersion)',
+      );
+    }
+
+    // Unreachable by construction: `iana` came out of this package's own
+    // bundled CLDR table, so it conforms by definition. Kept so that the rule
+    // is visibly applied on every provider, and so that a table regenerated
+    // from a bad source still cannot put a non-name into a result.
+    if (!isPlausibleZoneName(iana)) {
+      _unavailable(
+        'the bundled CLDR table maps "$key" to "$iana", which is not shaped '
+        'like a zone name',
       );
     }
 
