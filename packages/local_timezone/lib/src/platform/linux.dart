@@ -82,7 +82,7 @@ class LinuxProvider extends Provider {
       final name = zoneFromPath(link);
       if (name != null) return _named(name, link);
       _unavailable(
-        '/etc/localtime resolves to `$link`, which contains no zoneinfo '
+        '/etc/localtime resolves to "$link", which contains no zoneinfo '
         'directory to take a zone name from',
       );
     }

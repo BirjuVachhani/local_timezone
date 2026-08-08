@@ -66,7 +66,7 @@ class AndroidProvider extends Provider {
 
     if (_offsetish.hasMatch(reported)) {
       _unavailable(
-        '$_property holds `$reported`, which is not a zone name '
+        '$_property holds "$reported", which is not a zone name '
         'and not a legal GMT offset',
       );
     }
@@ -78,7 +78,7 @@ class AndroidProvider extends Provider {
     // somewhere with less context than this.
     if (!isPlausibleZoneName(reported)) {
       _unavailable(
-        '$_property holds `$reported`, which is not shaped like a zone name',
+        '$_property holds "$reported", which is not shaped like a zone name',
       );
     }
 

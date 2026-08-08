@@ -157,7 +157,7 @@ class AppleProvider extends Provider {
 
       if (_offsetish.hasMatch(identifier)) {
         _unavailable(
-          '-[NSTimeZone name] returned `$identifier`, which is not a zone '
+          '-[NSTimeZone name] returned "$identifier", which is not a zone '
           'name and not a fixed offset',
         );
       }
@@ -167,7 +167,7 @@ class AppleProvider extends Provider {
       // those nor anything else unnameable should become a timezone.
       if (!isPlausibleZoneName(identifier)) {
         _unavailable(
-          '-[NSTimeZone name] returned `$identifier`, which is not shaped '
+          '-[NSTimeZone name] returned "$identifier", which is not shaped '
           'like a zone name',
         );
       }

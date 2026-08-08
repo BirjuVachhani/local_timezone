@@ -1,8 +1,6 @@
 /// @docImport 'local_timezone_exception.dart';
 library;
 
-import 'describe.dart';
-
 /// The outcome of a successful local timezone lookup.
 ///
 /// Every platform reports its timezone in one of two shapes, so this type is
@@ -106,9 +104,9 @@ final class NamedLocalTimezone extends ResolvedLocalTimezone {
 
   @override
   String toString() =>
-      'NamedLocalTimezone(${describe(canonicalized)}'
-      '${name == canonicalized ? '' : ', name: ${describe(name)}'}'
-      '${raw == name ? '' : ', raw: ${describe(raw)}'})';
+      'NamedLocalTimezone($canonicalized'
+      '${name == canonicalized ? '' : ', name: $name'}'
+      '${raw == name ? '' : ', raw: $raw'})';
 
   @override
   bool operator ==(Object other) =>
@@ -206,8 +204,7 @@ final class OffsetLocalTimezone extends ResolvedLocalTimezone {
   @override
   String toString() =>
       'OffsetLocalTimezone(offset: $iso8601'
-      '${prefix == null ? '' : ', prefix: ${describe(prefix!)}'}'
-      ', raw: ${describe(raw)})';
+      '${prefix == null ? '' : ', prefix: $prefix'}, raw: $raw)';
 
   @override
   bool operator ==(Object other) =>
