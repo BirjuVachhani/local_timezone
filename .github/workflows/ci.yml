@@ -119,18 +119,27 @@ jobs:
         env:
           ZONE: ${{ matrix.zone.iana }}
         run: |
-          sudo systemsetup -settimezone "$ZONE"
-          # Verified against the symlink rather than against `systemsetup
-          # -gettimezone`, because the symlink is what Foundation and the test
-          # suite both actually read.
-          actual=$(readlink /etc/localtime)
-          case "$actual" in
-            */"$ZONE") ;;
-            *)
-              echo "::error::wanted $ZONE, /etc/localtime points at $actual"
-              exit 1
-              ;;
-          esac
+          # Not `systemsetup -settimezone`. It validates the argument against
+          # `-listtimezones`, and that needs the Full Disk Access a CI shell
+          # does not have, so on a runner it rejects every zone there is:
+          # "Asia/Kolkata is not a valid timezone". The symlink is what
+          # Foundation reads anyway, so write it directly.
+          if [ ! -f "/usr/share/zoneinfo/$ZONE" ]; then
+            echo "::error::no zone file for $ZONE in this tzdata"
+            exit 1
+          fi
+          sudo ln -sfh "/usr/share/zoneinfo/$ZONE" /etc/localtime
+
+          # Independent check, because writing the symlink and then reading it
+          # back would prove nothing. libc going through /etc/localtime has to
+          # agree with libc going through TZ. Both are evaluated for now, so
+          # this stays correct either side of a DST boundary.
+          from_symlink=$(date +%z)
+          from_tz=$(TZ="$ZONE" date +%z)
+          if [ "$from_symlink" != "$from_tz" ]; then
+            echo "::error::wanted $ZONE ($from_tz), /etc/localtime gives $from_symlink"
+            exit 1
+          fi
 
       - name: Set the system timezone (Windows)
         if: runner.os == 'Windows'

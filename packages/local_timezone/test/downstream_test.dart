@@ -19,19 +19,34 @@ import 'package:timezone/timezone.dart' as tz;
 ///
 /// `timezone` is a dev dependency only, so consumers are unaffected. It is here
 /// so the compatibility claim in the README is enforced rather than asserted.
-String roundTripWithTz(String zone) {
-  final result = Process.runSync(
-    Platform.resolvedExecutable,
-    ['run', 'test/fixture/round_trip.dart'],
-    environment: {'TZ': zone},
-  );
+String roundTripWithTz(String zone) => _roundTrip({'TZ': zone}, 'TZ=$zone');
+
+/// The same fixture with the environment left alone, so the zone under test is
+/// whatever the machine is configured with.
+String roundTripWithHostZone() => _roundTrip(null, 'the host zone');
+
+String _roundTrip(Map<String, String>? environment, String label) {
+  final result = Process.runSync(Platform.resolvedExecutable, [
+    'run',
+    'test/fixture/round_trip.dart',
+  ], environment: environment);
   if (result.exitCode != 0) {
-    fail('fixture failed for TZ=$zone: ${result.stderr}');
+    fail('fixture failed for $label: ${result.stderr}');
   }
   return (result.stdout as String).trim().split('\n').last;
 }
 
 void main() {
+  // The same bar, against whatever zone the machine is really configured with
+  // rather than one forced through `TZ`.
+  //
+  // This is the only round trip that runs on Windows, and there it is the one
+  // that matters: CI sets the system zone, so this checks the CLDR mapping end
+  // to end against the clock the runtime keeps.
+  test('the host zone round trips', () {
+    expect(roundTripWithHostZone(), endsWith('|MATCH'));
+  }, timeout: const Timeout(Duration(minutes: 2)));
+
   group(
     'round trips through package:timezone',
     () {
@@ -58,25 +73,28 @@ void main() {
       // Foundation falls back to a fixed-offset zone for these, so the bar is
       // that the offset matches what the runtime applies.
       for (final zone in const ['GMT+5', 'GMT-8', 'GMT+0530', 'GMT+5:30']) {
-        test(
-          'TZ=$zone (fixed offset)',
-          () {
-            expect(roundTripWithTz(zone), 'offset|MATCH');
-          },
-          // Windows has no `TZ`. Both the provider and Dart's own `DateTime`
-          // go to `GetDynamicTimeZoneInformation`, which reads the system zone
-          // and never the environment, so the subprocess resolves the runner's
-          // zone by name and there is no offset result to assert on. The named
-          // rows above survive that for free, because what they check is that
-          // whatever we resolved round trips onto the same wall clock, and
-          // that stays a real assertion when the zone is the host's own.
-          skip: Platform.isWindows
-              ? 'TZ is inert on Windows, so no fixed-offset zone is reachable'
-              : null,
-        );
+        test('TZ=$zone (fixed offset)', () {
+          expect(roundTripWithTz(zone), 'offset|MATCH');
+        });
       }
     },
     timeout: const Timeout(Duration(minutes: 5)),
+    // `TZ` moves one side of this comparison on Windows and not the other, so
+    // every row here would mismatch by construction.
+    //
+    // The provider reads `GetDynamicTimeZoneInformation`, which never consults
+    // the environment, so `TZ` cannot move it off the system zone. Dart's
+    // `DateTime` goes through the MSVC CRT instead, and that *does* read `TZ`,
+    // but only in the POSIX `IST-5:30` spelling. An IANA name fails to parse
+    // and the CRT falls back to UTC. So on a runner set to Asia/Kolkata this
+    // reports `named|Asia/Kolkata|MISMATCH 10:28 vs 4:58`: the name is right,
+    // and the clock it is being compared against has been dragged to UTC.
+    //
+    // The host zone test above is the Windows equivalent, and is the stronger
+    // check anyway, since nothing has to be faked to get there.
+    skip: Platform.isWindows
+        ? 'TZ drives DateTime but not the provider on Windows'
+        : null,
   );
 
   group('canonicalization preserves the zone', () {
