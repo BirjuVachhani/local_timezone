@@ -8,3 +8,7 @@ environment:
 
 workspace:
   - packages/*
+  # Listed explicitly because the glob above only reaches one level. Without
+  # membership it cannot resolve flutter_local_timezone, which is not on
+  # pub.dev.
+  - packages/flutter_local_timezone/test_host

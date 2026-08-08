@@ -1,0 +1,33 @@
+name: test_host
+
+description: >-
+  Host application for the device tests in ../integration_test. It exists only
+  so those tests have an APK and an .app to be installed into. It is not an
+  example, and it has no behaviour of its own. See README.md.
+
+publish_to: none
+
+version: 1.0.0+1
+
+resolution: workspace
+
+environment:
+  sdk: ^3.12.0
+  flutter: ">=3.44.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  # `flutter test -d <device>` looks for this in the project it is invoked
+  # from, not in the package that owns the test files, so it is needed here as
+  # well as in flutter_local_timezone.
+  integration_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true

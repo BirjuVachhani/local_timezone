@@ -21,6 +21,11 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  # For integration_test/, which is analysed as part of this package even
+  # though test_host is what installs and runs it.
+  integration_test:
+    sdk: flutter
+  timezone: ^0.11.1
   flutter_lints: ^6.0.0
 
 flutter:

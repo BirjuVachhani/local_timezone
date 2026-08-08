@@ -24,3 +24,8 @@ pubspec.lock
 
 # Development-only sources
 test/
+integration_test/
+
+# The application the device tests are installed into. Around 90 files of
+# generated Gradle and Xcode scaffolding, none of it any use to a consumer.
+test_host/

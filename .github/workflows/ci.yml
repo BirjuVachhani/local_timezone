@@ -89,8 +89,18 @@ jobs:
       # this matrix. Dart itself has first class arm64 builds on all three
       # operating systems, so the workspace member goes and Flutter stays out.
       # This is an ephemeral checkout; nothing is being deleted that matters.
-      - name: Take the Flutter package out of the workspace
-        run: rm -rf packages/flutter_local_timezone
+      - name: Take the Flutter packages out of the workspace
+        run: |
+          rm -rf packages/flutter_local_timezone
+
+          # `test_host` is nested inside what was just deleted, but it is also
+          # listed on its own in the root workspace, and pub rejects a member
+          # path that is not there: "No workspace packages matching
+          # packages/flutter_local_timezone/test_host". So the entry has to go
+          # with the directory. grep rather than `sed -i`, whose spelling
+          # differs across the GNU, BSD and Git Bash seds this runs on.
+          grep -v 'packages/flutter_local_timezone/test_host' pubspec.yaml > pubspec.tmp
+          mv pubspec.tmp pubspec.yaml
 
       - uses: dart-lang/setup-dart@v1
         with:
@@ -181,8 +191,18 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Take the Flutter package out of the workspace
-        run: rm -rf packages/flutter_local_timezone
+      - name: Take the Flutter packages out of the workspace
+        run: |
+          rm -rf packages/flutter_local_timezone
+
+          # `test_host` is nested inside what was just deleted, but it is also
+          # listed on its own in the root workspace, and pub rejects a member
+          # path that is not there: "No workspace packages matching
+          # packages/flutter_local_timezone/test_host". So the entry has to go
+          # with the directory. grep rather than `sed -i`, whose spelling
+          # differs across the GNU, BSD and Git Bash seds this runs on.
+          grep -v 'packages/flutter_local_timezone/test_host' pubspec.yaml > pubspec.tmp
+          mv pubspec.tmp pubspec.yaml
 
       - uses: dart-lang/setup-dart@v1
         with:
@@ -198,6 +218,164 @@ jobs:
         working-directory: packages/local_timezone
         run: dart test -p node
 
+  # Android, on a real emulator, which is the only place `android.dart` runs at
+  # all. It reads `__system_property_get`, which is bionic, so no desktop host
+  # reaches a line of it and the `test` job above cannot cover this provider
+  # even in principle.
+  #
+  # The tests live in `packages/flutter_local_timezone/integration_test`.
+  # `test_host` is the app they are installed into and owns nothing else; see
+  # its README.
+  android:
+    name: android · ${{ matrix.zone }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        zone: [Etc/UTC, Asia/Kolkata, America/Denver]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - run: flutter pub get
+
+      # The runner image ships KVM but leaves the device root-only. Without
+      # this the emulator falls back to software rendering, and the boot alone
+      # then eats most of the job timeout.
+      - name: Give the runner access to KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: flutter test (Android emulator)
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          ZONE: ${{ matrix.zone }}
+        with:
+          api-level: 35
+          # `google_apis`, not `google_apis_playstore`. Only the userdebug
+          # image lets `adb root` through, and without root the property below
+          # cannot be written at all: a Play Store image answers `adbd cannot
+          # run as root in production builds` and then `Failed to set property
+          # 'persist.sys.timezone'`.
+          target: google_apis
+          arch: x86_64
+          working-directory: packages/flutter_local_timezone/test_host
+          script: |
+            adb root
+            adb wait-for-device
+
+            # Otherwise the framework is free to resync the zone from the
+            # network partway through and undo the line below.
+            adb shell settings put global auto_time_zone 0
+
+            # The provider reads exactly this property, and so does bionic when
+            # `TZ` is unset, so writing it moves the provider and `DateTime`
+            # together. That is what keeps the round trip assertion meaningful
+            # here instead of tautological. Contrast Windows, where `TZ` moves
+            # only one of the two.
+            adb shell setprop persist.sys.timezone "$ZONE"
+            actual=$(adb shell getprop persist.sys.timezone | tr -d '\r')
+            if [ "$actual" != "$ZONE" ]; then
+              echo "::error::wanted $ZONE, the device reports '$actual'"
+              exit 1
+            fi
+
+            # Read rather than assumed to be emulator-5554, so a second
+            # emulator or a shifted port surfaces as a wrong-device run instead
+            # of a missing-device error.
+            serial=$(adb devices | awk '/emulator/ {print $1; exit}')
+
+            # `EXPECTED_RAW` is the same string as `EXPECTED_ZONE` because the
+            # Android provider returns the property verbatim as `raw`, and the
+            # property is what was just written. Both are already primary IANA
+            # names, so canonicalization is a no-op on all three.
+            flutter test ../integration_test -d "$serial" \
+              --dart-define=EXPECTED_ZONE="$ZONE" \
+              --dart-define=EXPECTED_RAW="$ZONE"
+
+  # iOS, on a simulator. Narrower than the Android job on purpose: the macOS
+  # cells in `test` already exercise `apple.dart` across three zones, so what
+  # this adds is the one thing they cannot show, that
+  # `DynamicLibrary.process()` resolves Foundation from inside an iOS app.
+  # iOS refuses to dlopen a Mach-O that is not embedded in the bundle, so
+  # "works on macOS" is not evidence that it works here.
+  ios:
+    name: ios simulator
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - run: flutter pub get
+
+      # Opportunistic, and deliberately not depended on. A simulator takes its
+      # zone from the host, so moving the host before booting one is the only
+      # lever there is, and if it lands this job runs against a half-hour
+      # offset whose IANA name is alias-prone rather than against plain UTC.
+      # If it does not land, nothing below cares. Same command as the macOS
+      # cells above, for the same reason.
+      - name: Nudge the host timezone before anything boots
+        env:
+          ZONE: Asia/Kolkata
+        run: |
+          sudo ln -sfh "/usr/share/zoneinfo/$ZONE" /etc/localtime
+          date
+
+      - name: Boot a simulator
+        run: |
+          udid=$(xcrun simctl list devices available -j | jq -r 'first(
+            .devices | to_entries[] | select(.key | test("iOS")) | .value[]
+            | select(.name | startswith("iPhone")) | .udid
+          )')
+          if [ -z "$udid" ] || [ "$udid" = "null" ]; then
+            echo "::error::no iPhone simulator on this runner image"
+            exit 1
+          fi
+
+          # `bootstatus -b` boots and then waits. Its exit code is not
+          # dependable (a booted device still reports Status=4294967295), so
+          # the state is what gets checked.
+          xcrun simctl bootstatus "$udid" -b || true
+          state=$(xcrun simctl list devices -j \
+            | jq -r --arg u "$udid" 'first(.devices[][] | select(.udid == $u) | .state)')
+          if [ "$state" != "Booted" ]; then
+            echo "::error::simulator $udid did not boot (state=$state)"
+            exit 1
+          fi
+          echo "SIM_UDID=$udid" >> "$GITHUB_ENV"
+
+      # No `EXPECTED_ZONE`, unlike Android. Nothing puts a simulator into a
+      # chosen zone: `simctl` has no timezone command, and both
+      # `SIMCTL_CHILD_TZ` and `launchctl setenv TZ` inside the device were
+      # tried and neither reaches Foundation. Asserting a zone here would
+      # therefore be asserting that the nudge above worked, which is not
+      # something this package controls.
+      #
+      # The round trip case carries the job instead, and it needs nothing
+      # injected: whatever zone the simulator reports has to agree with the
+      # simulator's own clock, so a well formed but wrong identifier still
+      # fails. The zone that was actually resolved is printed by the first
+      # test, so the log says which one ran.
+      - name: flutter test (iOS simulator)
+        working-directory: packages/flutter_local_timezone/test_host
+        run: flutter test ../integration_test -d "$SIM_UDID"
+
   # `environment: sdk: ^3.12.0` in the pubspec is a promise to callers. Without
   # this job the promise is only ever checked against whatever `stable`
   # happens to be.
@@ -208,8 +386,18 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Take the Flutter package out of the workspace
-        run: rm -rf packages/flutter_local_timezone
+      - name: Take the Flutter packages out of the workspace
+        run: |
+          rm -rf packages/flutter_local_timezone
+
+          # `test_host` is nested inside what was just deleted, but it is also
+          # listed on its own in the root workspace, and pub rejects a member
+          # path that is not there: "No workspace packages matching
+          # packages/flutter_local_timezone/test_host". So the entry has to go
+          # with the directory. grep rather than `sed -i`, whose spelling
+          # differs across the GNU, BSD and Git Bash seds this runs on.
+          grep -v 'packages/flutter_local_timezone/test_host' pubspec.yaml > pubspec.tmp
+          mv pubspec.tmp pubspec.yaml
 
       - uses: dart-lang/setup-dart@v1
         with:
