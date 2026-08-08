@@ -351,28 +351,18 @@ jobs:
           fi
           echo "SIM_UDID=$udid" >> "$GITHUB_ENV"
 
-      # `integration_test`, never `../integration_test`. `flutter test` selects
-      # its device backend only for paths starting with `<cwd>/integration_test`,
-      # and a path that fails that check is not an error: the run silently falls
-      # back to `flutter_tester` on this host, ignores `-d`, builds no app, and
-      # never loads `apple.dart` at all. It then passes. That green is the one
-      # failure mode this job cannot detect on its own, so the path matters more
-      # here than anywhere else in the file. The directory holds a single file
-      # that delegates to the suite in the package above it.
-      #
-      # Asserting the zone is sound despite `simctl` having no timezone command.
-      # A simulator does not copy the host's zone, it reads the host's file:
-      # `/etc/localtime` inside the device and on the host are the same inode,
-      # so the symlink written above is what Foundation resolves inside the app.
-      # `EXPECTED_RAW` matches `EXPECTED_ZONE` because Foundation reports the
-      # tail of that symlink verbatim and the zone above is already the primary
-      # spelling, so canonicalization is a no-op.
+      # The command, the test path it uses and the zone it asserts all live in
+      # the script, next to each other, because each of them only makes sense in
+      # terms of the other two. What belongs here is why there is a script at
+      # all: `flutter test -d <simulator>` can stop producing output and never
+      # return, and until now neither flutter nor this workflow had anything to
+      # say about that. The bound below backstops the script's own rather than
+      # replacing it, so it leaves room for both attempts the script is allowed
+      # to make and only fires if the script itself is what wedged.
       - name: flutter test (iOS simulator)
         working-directory: packages/flutter_local_timezone/test_host
-        run: |
-          flutter test integration_test -d "$SIM_UDID" \
-            --dart-define=EXPECTED_ZONE="$ZONE" \
-            --dart-define=EXPECTED_RAW="$ZONE"
+        timeout-minutes: 30
+        run: ../../../.github/scripts/ios_simulator_test.sh
 
   # `environment: sdk: ^3.12.0` in the pubspec is a promise to callers. Without
   # this job the promise is only ever checked against whatever `stable`
