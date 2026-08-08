@@ -1,0 +1,15 @@
+# https://dart.dev/tools/private-files
+# Created by `dart pub`
+.dart_tool/
+
+# Avoid committing pubspec.lock for library packages; see
+# https://dart.dev/tools/pub/private-files#pubspec-lock.
+pubspec.lock
+
+# Build output. `flutter test` drops asset bundles and test caches here even
+# though this is a pure Dart package.
+build/
+
+# Test coverage and generated API docs
+coverage/
+doc/api/

@@ -1,0 +1,26 @@
+# Files left out of the archive uploaded by `flutter pub publish`.
+#
+# Pub uses this file INSTEAD of .gitignore whenever it exists, and it never
+# looks at .gitignore files above the package root. So every rule that matters
+# for publishing has to be repeated here, not just the publish-only extras.
+
+# Local tooling and build output
+.dart_tool/
+build/
+coverage/
+doc/api/
+pubspec.lock
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# Editor and OS files
+.idea/
+.vscode/
+*.iml
+.DS_Store
+
+# CI configuration
+.github/
+
+# Development-only sources
+test/

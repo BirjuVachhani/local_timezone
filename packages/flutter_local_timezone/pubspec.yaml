@@ -1,0 +1,25 @@
+name: flutter_local_timezone
+
+description: "A new Flutter package project."
+
+version: 0.1.0
+
+repository: https://github.com/BirjuVachhani/local_timezone
+homepage: https://github.com/BirjuVachhani/local_timezone
+
+resolution: workspace
+
+environment:
+  sdk: ^3.12.2
+  flutter: ">=1.17.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:

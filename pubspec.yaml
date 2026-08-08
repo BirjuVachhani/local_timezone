@@ -1,0 +1,10 @@
+name: local_timezone_mono_repo
+
+# The workspace root is not a package anyone should depend on.
+publish_to: none
+
+environment:
+  sdk: ^3.12.0
+
+workspace:
+  - packages/*
