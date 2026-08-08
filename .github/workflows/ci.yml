@@ -308,6 +308,44 @@ jobs:
           # commands. Do not replace it with `adb root` plus `setprop`.
           script: sh ../../../.github/scripts/android_device_test.sh
 
+  # macOS, as a real Flutter app rather than a Dart process. This is the only
+  # job that can prove the Apple half of the change listener, because it is the
+  # only place the system timezone can actually be moved: `systemsetup` needs
+  # root, and no App Store safe API can move it from inside a process at all.
+  #
+  # The `test` job's macOS cells cover reading the zone and do not overlap with
+  # this. They relink `/etc/localtime`, which moves the value Foundation reads
+  # but posts no notification, so they could not exercise a listener even if
+  # they wanted to. See the script for why that distinction matters.
+  #
+  # iOS is deliberately not given the same treatment. A simulator takes its zone
+  # from the host, and whether it re-reads on a host change or only at boot is
+  # not documented, so the mid-run move is not known to be observable there.
+  # Until someone establishes that, the iOS job below stays a read-only check
+  # and the listener case skips on it.
+  macos_app:
+    name: macos app
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      # Where the machine starts, and where the harness moves it once the app is
+      # up. Both must appear in `systemsetup -listtimezones`, which is narrower
+      # than tzdb; the script checks that before it changes anything.
+      ZONE: Asia/Kolkata
+      ZONE_AFTER: Australia/Sydney
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - run: flutter pub get
+
+      - name: flutter test (macOS app)
+        working-directory: packages/flutter_local_timezone/test_host
+        run: sh ../../../.github/scripts/macos_device_test.sh
+
   # iOS, on a simulator. Narrower than the Android job on purpose: the macOS
   # cells in `test` already exercise `apple.dart` across three zones, so what
   # this adds is the one thing they cannot show, that

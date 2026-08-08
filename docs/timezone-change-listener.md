@@ -52,8 +52,8 @@ turns a platform value into an answer.
 | Platform | Standard system trigger | Flutter hook | Push |
 | --- | --- | --- | --- |
 | Android | `ACTION_TIMEZONE_CHANGED` broadcast | `BroadcastReceiver`, registered on subscribe | **yes, implemented and verified on device** |
-| iOS | `NSSystemTimeZoneDidChangeNotification` | `NotificationCenter` observer | yes |
-| macOS | `NSSystemTimeZoneDidChangeNotification` | `NotificationCenter` observer | yes |
+| iOS | `NSSystemTimeZoneDidChangeNotification` | `NotificationCenter` observer | **implemented**, notification not yet observed firing |
+| macOS | `NSSystemTimeZoneDidChangeNotification` | `NotificationCenter` observer | **implemented**, notification not yet observed firing |
 | Windows | `WM_TIMECHANGE` / `WM_SETTINGCHANGE` | `RegisterTopLevelWindowProcDelegate` | yes, needs verifying |
 | Linux | `/etc/localtime` replacement | `GFileMonitor` on `/etc` | yes |
 | Web | none exists | `visibilitychange`, `focus`, `pageshow`, `resume` | no, see the gap below |
@@ -171,6 +171,18 @@ Add an observer in the plugin's `register(with:)`, remove it on detach, and send
 an empty event over the `EventChannel`. Delivery is already on the main queue, so
 the channel send needs no dispatch hop.
 
+One Swift file serves both platforms, via `sharedDarwinSource: true` in the
+pubspec, which puts the source under `darwin/` instead of near-identical copies
+under `ios/` and `macos/`. The notification, the observer API and the reset call
+are identical on both; the only genuine difference is that iOS declares the
+registrar's messenger as a method and macOS as a property, which is one `#if
+os(iOS)`. This composes with the Swift Package Manager layout the current plugin
+template generates: the tool symlinks `darwin/flutter_local_timezone` next to
+its generated `FlutterFramework` package, so the manifest's relative dependency
+path resolves unchanged. A CocoaPods podspec sits beside it for projects that
+have not moved to SPM, with `s.ios.dependency` and `s.osx.dependency` rather
+than a single `s.platform`.
+
 ### The Foundation cache, and why this hook is better than the pure Dart one
 
 The `AppleProvider` doc comment already records that Foundation memoizes the
@@ -191,6 +203,35 @@ documented, so our handler may run before or after Foundation drops its cache.
 Calling `resetSystemTimeZone` unconditionally makes the ordering irrelevant and
 costs one message send per zone change, which is a handful per year. Do it, and
 note in Phase 3 that the reason is defensive rather than proven.
+
+### Testing it needs the right lever, and the obvious one does not work
+
+Worth stating before anyone writes the harness, because the wrong lever fails
+silently and looks exactly like a broken implementation.
+
+`sudo ln -sfh /var/db/timezone/zoneinfo/<zone> /etc/localtime` is how this
+repository's CI already configures a macOS host, and it is correct for
+*reading*: Foundation recovers the zone name from that symlink. It is the wrong
+lever for *notification*. It mutates the filesystem and nothing else, so nothing
+posts `com.apple.system.timezone`, no `NSSystemTimeZoneDidChangeNotification` is
+delivered, and every running process keeps the zone it had cached.
+
+`sudo systemsetup -settimezone <zone>` goes through the privileged admin
+framework, which updates the preference store *and* the symlink *and* posts the
+notification. That is the lever a listener test has to pull.
+
+Two caveats on it. Apple's own position is that there is no supported API for
+changing the system timezone and that `systemsetup` is an admin tool rather than
+a substitute for one, so this is a harness technique and not something to
+suggest to users. And its accepted spellings are not the whole tzdb: identifiers
+exist that `-gettimezone` reports but `-listtimezones` omits, so the zone a test
+moves *to* has to be checked against that list rather than assumed.
+
+Whether a host-side change propagates into a **booted iOS simulator** is a
+further unknown, and a separate one. The simulator takes its zone from the host,
+but nothing documents whether it re-reads on a host change or only at boot, and
+if it does not then the iOS listener case cannot be driven from CI at all
+without a real device.
 
 ### Requirements
 
@@ -553,6 +594,10 @@ Run on macOS 15 (Darwin 25.5.0), Dart 3.12.2, Flutter 3.44.9.
 | **`ACTION_TIMEZONE_CHANGED` reaches a runtime-registered receiver on a real zone change** | `android_device_test.sh` against an API 36 emulator, zone moved mid-suite with `cmd alarm set-timezone` | **passes**, twice, from `Asia/Kolkata` and from `America/Denver` |
 | **The new zone is readable by the time the broadcast arrives** | the same case asserts the resolved value, not merely that an event fired | **passes**: `LocalTimezoneChanged(NamedLocalTimezone(Australia/Sydney))` |
 | The Kotlin plugin builds and registers | `flutter build apk --debug` on `test_host` | `GeneratedPluginRegistrant` lists `FlutterLocalTimezonePlugin` |
+| One `darwin/` source builds for both Apple platforms | `flutter build ios --simulator` and `flutter build macos` | both succeed; SPM symlinks the shared package beside `FlutterFramework` |
+| **A native handler is registered on the channel on iOS and macOS** | device suite probes the `EventChannel` wire protocol by invoking `listen` on a `MethodChannel` of the same name | **passes** on an iPhone 17 Pro simulator and on macOS |
+| That probe can actually fail | reran both with the channel name pointed at a typo | **fails**, as it must |
+| A green Apple suite *without* that probe proves nothing | same typo, probe removed | still reported "All tests passed" |
 | `com.apple.system.timezone` is a live notify key | `notifyutil -g` | `com.apple.system.timezone 0` |
 | `notify_register_file_descriptor` is callable from Dart FFI | spike | status 0, fd 8, token 18 |
 | A blocking `read(2)` on the notify fd wakes a Dart isolate with no runloop | spike, self-posted | woke with 4 bytes |
@@ -568,8 +613,9 @@ footnote:
 
 | Claim | Needs |
 | --- | --- |
-| `NSSystemTimeZoneDidChangeNotification` fires on a real zone change | an iOS device, and root on macOS |
-| `resetSystemTimeZone` is required before re-reading | the same |
+| `NSSystemTimeZoneDidChangeNotification` fires on a real zone change, and reaches our observer | `sudo systemsetup -settimezone` on macOS. This is the one remaining gap on Apple: everything up to the observer is proven, the observer firing is not |
+| `resetSystemTimeZone` is required before re-reading rather than merely harmless | the same |
+| A host zone change propagates into a booted iOS simulator at all | the same, plus a booted simulator. If it does not, the iOS listener case cannot be driven from CI and needs a real device |
 | `WM_TIMECHANGE` or `WM_SETTINGCHANGE` reaches a Flutter window on a Settings-driven change | a Windows machine |
 | `GFileMonitor` on `/etc` fires for `timedatectl set-timezone` | a Linux machine |
 | Flutter web maps `visibilitychange` and `focus` to lifecycle states finely enough | a browser |

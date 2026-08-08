@@ -4,7 +4,6 @@
 // Android broadcast actually arrives is a device claim and lives in
 // `integration_test/device_test.dart`.
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_local_timezone/flutter_local_timezone.dart';
@@ -42,7 +41,17 @@ void main() {
   // that way fails every test in the group. A variant sets and restores it
   // inside the body, where the invariant check sees it undone.
   final onAndroid = TargetPlatformVariant.only(TargetPlatform.android);
-  final onIOS = TargetPlatformVariant.only(TargetPlatform.iOS);
+
+  /// Every platform with a native doorbell, so the gating test proves each one
+  /// individually rather than proving Android three times.
+  final onImplemented = TargetPlatformVariant(const {
+    TargetPlatform.android,
+    TargetPlatform.iOS,
+    TargetPlatform.macOS,
+  });
+
+  /// A platform that has no plugin yet. Swap this when Windows lands.
+  final onUnimplemented = TargetPlatformVariant.only(TargetPlatform.windows);
 
   /// The native side of the channel, captured when Dart subscribes.
   MockStreamHandlerEventSink? sink;
@@ -401,32 +410,58 @@ void main() {
   });
 
   group('platform gating', () {
-    watcherTest('does not open a channel where there is no implementation', (
+    watcherTest('opens a channel on every implemented platform', (
       tester,
     ) async {
-      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
       LocalTimezone.setMockValue(_kolkata);
 
-      final events = <LocalTimezoneEvent>[];
-      LocalTimezoneWatcher.addListener(events.add);
+      LocalTimezoneWatcher.addListener((_) {});
       await tester.pump();
 
       expect(
         sink,
-        isNull,
+        isNotNull,
         reason:
-            'subscribing on a platform with no plugin logs a framework error '
-            'rather than failing catchably, so it must not be attempted',
+            'this platform has a native implementation, so the watcher should '
+            'have subscribed to its channel',
       );
 
-      // The lifecycle leg still works, which is the whole point of gating
-      // rather than throwing.
       LocalTimezone.setMockValue(_london);
-      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
-      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
-      await tester.pump();
+      await signal(tester);
+      expect(LocalTimezoneWatcher.listenable.value, _london);
+    }, variant: onImplemented);
 
-      expect(events, [const LocalTimezoneChanged(_london)]);
-    }, variant: onIOS);
+    watcherTest(
+      'does not open a channel where there is no implementation',
+      (tester) async {
+        LocalTimezone.setMockValue(_kolkata);
+
+        final events = <LocalTimezoneEvent>[];
+        LocalTimezoneWatcher.addListener(events.add);
+        await tester.pump();
+
+        expect(
+          sink,
+          isNull,
+          reason:
+              'subscribing on a platform with no plugin logs a framework error '
+              'rather than failing catchably, so it must not be attempted',
+        );
+
+        // The lifecycle leg still works, which is the whole point of gating
+        // rather than throwing.
+        LocalTimezone.setMockValue(_london);
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.inactive,
+        );
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        await tester.pump();
+
+        expect(events, [const LocalTimezoneChanged(_london)]);
+      },
+      variant: onUnimplemented,
+    );
   });
 }

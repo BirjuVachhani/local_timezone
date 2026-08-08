@@ -85,6 +85,7 @@ packages/
   flutter_local_timezone/   the Flutter-facing package and change listener
     lib/src/                the listener funnel and its platform signal
     android/                the BroadcastReceiver that feeds it
+    darwin/                 one Swift observer serving both iOS and macOS
     test/                   host tests for the funnel
     integration_test/       the Android and iOS device tests
     test_host/              the app those tests are installed into

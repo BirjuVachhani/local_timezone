@@ -45,7 +45,8 @@ typedef LocalTimezoneListener = void Function(LocalTimezoneEvent event);
 /// | Platform | Native trigger |
 /// | --- | --- |
 /// | Android | `ACTION_TIMEZONE_CHANGED` |
-/// | iOS, macOS, Windows, Linux | not yet implemented |
+/// | iOS, macOS | `NSSystemTimeZoneDidChangeNotification` |
+/// | Windows, Linux | not yet implemented |
 /// | Web | none exists |
 ///
 /// The **lifecycle leg** re-checks whenever the app returns to the foreground,

@@ -39,7 +39,9 @@
 // host over adb, and the case that asserts on it therefore has to be last.
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_local_timezone/flutter_local_timezone.dart';
+import 'package:flutter_local_timezone/src/timezone_signal.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:timezone/data/latest.dart' as tzdata;
@@ -227,4 +229,55 @@ void main() {
     // for `getTimeZoneName()` inside the callback would see.
     expect(LocalTimezone.getTimeZoneName(), zoneAfter);
   }, skip: zoneAfter.isEmpty);
+
+  // Deliberately last, because it deliberately breaks the native subscription
+  // that everything above depends on.
+  //
+  // This exists because a green run proves less than it looks like it does.
+  // When Dart subscribes to an EventChannel with no native handler, the failure
+  // is handed to `FlutterError.reportError` rather than delivered as a stream
+  // error, and that does *not* fail an integration test: pointing the channel
+  // name at a deliberate typo and rerunning this suite on macOS still reported
+  // "All tests passed". Without a positive check, "the suite is green on an
+  // Apple device" and "the plugin was never registered" are the same
+  // observation.
+  //
+  // So probe the wire protocol directly. An EventChannel is a MethodChannel of
+  // the same name carrying `listen` and `cancel`, so invoking `listen` by hand
+  // reaches the same native stream handler. No handler means
+  // MissingPluginException.
+  testWidgets(
+    'the platform channel has a native handler',
+    (_) async {
+      const probe = MethodChannel(timezoneSignalChannelName);
+      try {
+        await probe.invokeMethod<void>('listen');
+      } on MissingPluginException {
+        fail(
+          'nothing is registered on "$timezoneSignalChannelName", so this '
+          'platform has no native doorbell however green the rest of this '
+          'suite looks. Check that the plugin is declared for this platform in '
+          'pubspec.yaml, that the host app depends on flutter_local_timezone, '
+          'and that the channel name matches on both sides.',
+        );
+      } finally {
+        // Undo it, for tidiness rather than correctness: this is the last case.
+        try {
+          await probe.invokeMethod<void>('cancel');
+        } on PlatformException {
+          // Nothing after this depends on the subscription.
+        }
+      }
+    },
+    skip: kIsWeb || !_platformsWithADoorbell.contains(defaultTargetPlatform),
+  );
 }
+
+/// Kept beside the probe rather than imported, so that adding a platform to
+/// the package's own gate without adding it here shows up as a skipped case
+/// rather than as silence.
+const _platformsWithADoorbell = {
+  TargetPlatform.android,
+  TargetPlatform.iOS,
+  TargetPlatform.macOS,
+};

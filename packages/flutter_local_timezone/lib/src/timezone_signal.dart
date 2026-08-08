@@ -1,11 +1,14 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
-/// Must match `CHANNEL` in `FlutterLocalTimezonePlugin.kt`.
+/// Must match `channelName` in every native implementation:
+/// `FlutterLocalTimezonePlugin.kt` and `FlutterLocalTimezonePlugin.swift`.
 ///
-/// Not private, so tests can install a mock stream handler on the same name
-/// rather than repeating the literal and silently testing a channel nothing
-/// listens on.
+/// Not private, so tests can use the same name rather than repeating the
+/// literal and silently testing a channel nothing listens on. That matters more
+/// than it looks: a mismatch here does not throw anywhere a test can see, it
+/// just means no event ever arrives. See the device test that probes for a
+/// native handler.
 const timezoneSignalChannelName =
     'com.birjuvachhani.flutter_local_timezone/changes';
 
@@ -28,7 +31,12 @@ bool get _hasNativeSignal =>
     // `defaultTargetPlatform` reports the *host* on web, so a browser on an
     // Android phone claims to be Android. Check this first or the web build
     // subscribes to a channel that cannot exist.
-    !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+    !kIsWeb &&
+    const {
+      TargetPlatform.android,
+      TargetPlatform.iOS,
+      TargetPlatform.macOS,
+    }.contains(defaultTargetPlatform);
 
 Stream<void>? _signals;
 

@@ -45,3 +45,14 @@ flutter:
       android:
         package: com.birjuvachhani.flutter_local_timezone
         pluginClass: FlutterLocalTimezonePlugin
+      # `sharedDarwinSource` puts both Apple platforms on one source tree under
+      # `darwin/` instead of near-identical copies under `ios/` and `macos/`.
+      # They observe the same notification through the same framework API; the
+      # only real difference is that iOS spells the registrar's messenger as a
+      # method and macOS as a property.
+      ios:
+        pluginClass: FlutterLocalTimezonePlugin
+        sharedDarwinSource: true
+      macos:
+        pluginClass: FlutterLocalTimezonePlugin
+        sharedDarwinSource: true
