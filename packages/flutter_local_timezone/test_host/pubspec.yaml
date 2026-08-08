@@ -27,6 +27,17 @@ dev_dependencies:
   # well as in flutter_local_timezone.
   integration_test:
     sdk: flutter
+  # Needed for plugin registration, not for the import.
+  #
+  # The workspace already puts flutter_local_timezone on this project's package
+  # config, so `import 'package:flutter_local_timezone/...'` resolved from the
+  # device tests long before this line existed. Plugin registration is a
+  # different lookup: the tool walks *this* pubspec's dependency graph to decide
+  # what goes into GeneratedPluginRegistrant, and an undeclared package is not
+  # in it. Without this the Android EventChannel has no handler, every `listen`
+  # fails, and the listener test times out having proved nothing.
+  flutter_local_timezone:
+    path: ../
   flutter_lints: ^6.0.0
 
 flutter:

@@ -18,7 +18,12 @@ holding two packages.
 | Package | Version | Description |
 | --- | --- | --- |
 | [`local_timezone`](packages/local_timezone/) | 0.1.0 | The implementation. Pure Dart, no Flutter dependency, usable from a CLI or server. |
-| [`flutter_local_timezone`](packages/flutter_local_timezone/) | 0.1.0 | A thin Flutter-facing package that re-exports the whole `local_timezone` API. Also hosts the on-device tests. |
+| [`flutter_local_timezone`](packages/flutter_local_timezone/) | 0.1.0 | The Flutter-facing package. Re-exports the whole `local_timezone` API and adds `LocalTimezoneWatcher`, which notifies when the device's timezone changes. Also hosts the on-device tests. |
+
+**Flutter apps should depend on `flutter_local_timezone`.** Change notification
+needs each platform's own notification API, which needs native code, which needs
+a plugin, so it lives there rather than in the pure Dart package. Reading the
+zone works identically from either.
 
 > **Neither package is on pub.dev yet.** Until the first release, depend on them
 > by git:
@@ -77,9 +82,13 @@ packages/
     test/                   unit tests, one file per provider
     tool/                   the generators for those tables
     example/
-  flutter_local_timezone/   the Flutter-facing re-export
+  flutter_local_timezone/   the Flutter-facing package and change listener
+    lib/src/                the listener funnel and its platform signal
+    android/                the BroadcastReceiver that feeds it
+    test/                   host tests for the funnel
     integration_test/       the Android and iOS device tests
     test_host/              the app those tests are installed into
+docs/                       design and platform research
 research/                   background notes written while building this
 .github/workflows/ci.yml
 ```

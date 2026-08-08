@@ -21,15 +21,22 @@
 // green suite while proving nothing about the device, so keep the path
 // relative to the runner project.
 //
-// Two of the cases below compare against a zone the harness configured, which
-// this process cannot discover for itself. CI passes it in:
+// Some cases below compare against zones the harness controls, which this
+// process cannot discover for itself. CI passes them in:
 //
 //     --dart-define=EXPECTED_ZONE=Asia/Kolkata
 //     --dart-define=EXPECTED_RAW=Asia/Calcutta
+//     --dart-define=ZONE_AFTER=Australia/Sydney
 //
-// Both are optional. Left unset, those two cases skip and the rest still run,
+// All three are optional. Left unset, those cases skip and the rest still run,
 // so a bare `flutter test integration_test -d <device>` on a workstation is a
 // useful smoke test rather than a failure.
+//
+// The first two describe the zone the device is in when the suite starts. The
+// third is different in kind: it is the zone the harness moves the device to
+// *while the suite runs*, which is the only way to exercise the listener. An
+// app cannot change its own timezone, so that mutation has to come from the
+// host over adb, and the case that asserts on it therefore has to be last.
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_timezone/flutter_local_timezone.dart';
@@ -53,13 +60,47 @@ const expectedZone = String.fromEnvironment('EXPECTED_ZONE');
 /// to expect.
 const expectedRaw = String.fromEnvironment('EXPECTED_RAW');
 
+/// The zone the harness moves the device to *while this suite is running*.
+///
+/// Unset outside CI, which skips the listener case. Proving that a platform
+/// really delivers a change notification needs the zone to actually change
+/// mid-run, and nothing inside the app can do that: an app cannot hold
+/// `SET_TIME_ZONE`, so the mutation has to come from the host over adb. See
+/// `.github/scripts/android_device_test.sh`.
+const zoneAfter = String.fromEnvironment('ZONE_AFTER');
+
+/// How long to wait for the harness to move the zone.
+///
+/// Generous on purpose. The host schedules the change a fixed delay after the
+/// app process appears, and CI emulators are slow enough that pinning this
+/// tighter would buy flakiness rather than speed.
+const _listenerTimeout = Duration(seconds: 90);
+
+/// Everything the watcher reported, from process start.
+///
+/// Collected from `setUpAll` rather than inside the case that asserts on it,
+/// because the harness fires its change against the wall clock and cannot know
+/// which case is running. Registering early means the event is captured
+/// whenever it lands.
+final _observed = <LocalTimezoneEvent>[];
+
 String _wall(DateTime d) =>
     '${d.year}-${d.month}-${d.day} ${d.hour}:${d.minute}:${d.second}';
+
+Future<void> _awaitEvent() async {
+  final deadline = DateTime.now().add(_listenerTimeout);
+  while (_observed.isEmpty && DateTime.now().isBefore(deadline)) {
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+  }
+}
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
-  setUpAll(tzdata.initializeTimeZones);
+  setUpAll(() {
+    tzdata.initializeTimeZones();
+    LocalTimezoneWatcher.addListener(_observed.add);
+  });
 
   testWidgets('resolves to a named zone', (_) async {
     final resolved = LocalTimezone.getTimeZone();
@@ -139,4 +180,51 @@ void main() {
       LocalTimezone.getTimeZoneName(),
     );
   });
+
+  // Deliberately last. It waits for the harness to move the device zone, and
+  // every case above asserts on the zone the harness configured *before* the
+  // run, so they have to be finished before that happens.
+  testWidgets('reports a zone change made by the system', (_) async {
+    await _awaitEvent();
+
+    expect(
+      _observed,
+      isNotEmpty,
+      reason:
+          'the device zone was moved to $zoneAfter and no listener fired '
+          'within $_listenerTimeout. Either the platform notification never '
+          'arrived, or the harness never changed the zone.',
+    );
+
+    final event = _observed.first;
+    debugPrint('watcher reported $event');
+
+    // Not just `isA<LocalTimezoneChanged>()`. The whole design rests on the
+    // platform having already written the new zone by the time it tells us: if
+    // the notification went out first, this would re-resolve, read the old
+    // value, diff to "no change", and report nothing at all. Asserting the
+    // value is what tests that ordering. Asserting only that *an* event arrived
+    // would pass on a build where the value was stale.
+    expect(
+      event,
+      isA<LocalTimezoneChanged>().having(
+        (e) => switch (e.timezone) {
+          NamedLocalTimezone(:final canonicalized) => canonicalized,
+          final OffsetLocalTimezone offset => offset.iso8601,
+        },
+        'timezone',
+        zoneAfter,
+      ),
+    );
+
+    // The same value, through the other half of the public API.
+    expect(
+      LocalTimezoneWatcher.listenable.value,
+      (event as LocalTimezoneChanged).timezone,
+    );
+
+    // And the plain synchronous read agrees, which is what a caller reaching
+    // for `getTimeZoneName()` inside the callback would see.
+    expect(LocalTimezone.getTimeZoneName(), zoneAfter);
+  }, skip: zoneAfter.isEmpty);
 }

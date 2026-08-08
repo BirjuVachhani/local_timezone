@@ -265,6 +265,11 @@ jobs:
         uses: reactivecircus/android-emulator-runner@v2
         env:
           ZONE: ${{ matrix.zone }}
+          # Where the harness moves the device to once the app is running, so
+          # the listener has a real ACTION_TIMEZONE_CHANGED to hear. One
+          # constant for every cell, because it only has to differ from each
+          # `zone` in the matrix above, and this differs from all three.
+          ZONE_AFTER: Australia/Sydney
         with:
           api-level: 35
           # Keep the `google_apis` userdebug image, not the Play Store user

@@ -3,7 +3,11 @@
 set -eu
 
 : "${ZONE:?ZONE must name the timezone to configure}"
+: "${ZONE_AFTER:?ZONE_AFTER must name the timezone to move to mid-run}"
 : "${ANDROID_SERIAL:?android-emulator-runner must select the emulator}"
+
+# The application id of test_host, which is what the mover below waits for.
+APP_ID=com.birjuvachhani.test_host
 
 # The action already waits for sys.boot_completed, but keep the readiness check
 # beside the device mutation it protects. `adb wait-for-device` only proves that
@@ -76,8 +80,15 @@ started=$(date +%s)
     zone_now=$(echo "$state" | sed -n 1p)
     auto_now=$(echo "$state" | sed -n 2p)
     if [ -n "$zone_now" ] && [ "$zone_now" != "$seen_zone" ]; then
-      echo "::warning::$(( $(date +%s) - started ))s in, the device zone went" \
-        "from '$seen_zone' to '$zone_now'"
+      if [ "$seen_zone" = "$ZONE" ] && [ "$zone_now" = "$ZONE_AFTER" ]; then
+        # The one transition this run asks for. Logged, not warned about, so
+        # the annotation still means "something moved that should not have".
+        echo "$(( $(date +%s) - started ))s in, the harness moved the device" \
+          "from '$seen_zone' to '$zone_now'"
+      else
+        echo "::warning::$(( $(date +%s) - started ))s in, the device zone went" \
+          "from '$seen_zone' to '$zone_now'"
+      fi
       seen_zone=$zone_now
     fi
     if [ -n "$auto_now" ] && [ "$auto_now" != "$seen_auto" ]; then
@@ -93,24 +104,72 @@ watcher=$!
 # provider returns the property verbatim as `raw`. The matrix entries are
 # primary IANA names, so canonicalization is a no-op for all three.
 rc=0
+# Move the zone a second time while the suite is running, so the listener has
+# something real to hear. This has to come from the host: an app cannot change
+# the device zone, because SET_TIME_ZONE is privileged, so there is no way to
+# trigger a genuine ACTION_TIMEZONE_CHANGED from inside the test.
+#
+# Timed off the app process appearing rather than off a fixed delay from here.
+# `flutter test` spends most of its wall clock building and installing, and that
+# varies by minutes between runs, so a fixed sleep either fires before any
+# listener exists or burns the job timeout waiting.
+move_zone_when_app_starts() {
+  attempt=0
+  until adb shell pidof "$APP_ID" >/dev/null 2>&1; do
+    attempt=$((attempt + 1))
+    if [ "$attempt" -ge 600 ]; then
+      echo "::warning::$APP_ID never started, so the zone was never moved and" \
+        "the listener case will fail on its timeout rather than on a verdict"
+      return
+    fi
+    sleep 1
+  done
+
+  # Margin between the process appearing and the Dart suite reaching setUpAll,
+  # where the listener is registered. The cases that assert on $ZONE run first
+  # and take milliseconds, so this only has to outlast engine startup.
+  sleep 15
+
+  echo "moving the device from $ZONE to $ZONE_AFTER"
+  adb shell cmd alarm set-timezone "$ZONE_AFTER"
+}
+
+move_zone_when_app_starts &
+mover=$!
+# Otherwise a failure before the mover finishes leaves it running against a
+# teardown emulator, and the step hangs waiting on a background child.
+trap 'kill "$mover" 2>/dev/null || true' EXIT
+
 flutter test integration_test -d "$ANDROID_SERIAL" \
   --dart-define=EXPECTED_ZONE="$ZONE" \
-  --dart-define=EXPECTED_RAW="$ZONE" || rc=$?
+  --dart-define=EXPECTED_RAW="$ZONE" \
+  --dart-define=ZONE_AFTER="$ZONE_AFTER" || rc=$?
 
 kill "$watcher" 2>/dev/null || true
 wait "$watcher" 2>/dev/null || true
+kill "$mover" 2>/dev/null || true
+wait "$mover" 2>/dev/null || true
 
 # Read it back rather than inferring it from whether the suite was happy. A
-# device that moved under the run invalidates every assertion in it, and telling
-# that apart from a real regression is the difference between a broken harness
-# and a broken package. Checked even when the suite passed, because the Etc/UTC
-# cell expects the value the device would revert to and so cannot fail on this
-# by itself.
+# device that moved for a reason this script did not choose invalidates every
+# assertion in the run, and telling that apart from a real regression is the
+# difference between a broken harness and a broken package. Checked even when
+# the suite passed, because the Etc/UTC cell expects the value the device would
+# revert to and so cannot fail on this by itself.
+#
+# The expected end state is ZONE_AFTER, not ZONE: this run moves the device on
+# purpose, once, to give the listener a real broadcast to hear.
 final=$(adb shell getprop persist.sys.timezone | tr -d '\r')
-if [ "$final" != "$ZONE" ]; then
-  echo "::error::the device was in $ZONE when the run started and is in" \
-    "'$final' now, so it moved underneath the test and the result above says" \
-    "nothing about the provider. The warnings above give the time it moved."
+if [ "$final" = "$ZONE" ]; then
+  echo "::error::the device is still in $ZONE, so the harness never moved it" \
+    "to $ZONE_AFTER. Whatever the listener case reported above, it was not" \
+    "reporting on a real system timezone change."
+  exit 1
+elif [ "$final" != "$ZONE_AFTER" ]; then
+  echo "::error::the run should have ended in $ZONE_AFTER and the device is in" \
+    "'$final', so it moved for a reason this script did not choose and the" \
+    "result above says nothing about the provider. The warnings above give the" \
+    "time it moved."
   exit 1
 fi
 

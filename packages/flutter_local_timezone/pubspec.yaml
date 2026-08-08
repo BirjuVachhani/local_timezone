@@ -29,3 +29,19 @@ dev_dependencies:
   flutter_lints: ^6.0.0
 
 flutter:
+  # Only the platforms with a native change notification appear here. The
+  # package is usable on every platform `local_timezone` supports whether or
+  # not it is listed: resolution is pure Dart and needs nothing from this
+  # section, and `LocalTimezoneWatcher` falls back to its app-lifecycle leg
+  # where there is no native implementation.
+  #
+  # `dartPluginClass` is deliberately absent. It exists to let the tooling call
+  # a static `registerWith` during startup, which is how a platform
+  # implementation injects itself into a separate app-facing package. Nothing
+  # here needs that: the listener API and the channel that feeds it live in the
+  # same package, so the Dart side opens the `EventChannel` itself.
+  plugin:
+    platforms:
+      android:
+        package: com.birjuvachhani.flutter_local_timezone
+        pluginClass: FlutterLocalTimezonePlugin
