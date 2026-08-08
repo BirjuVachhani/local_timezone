@@ -54,8 +54,8 @@ turns a platform value into an answer.
 | Android | `ACTION_TIMEZONE_CHANGED` broadcast | `BroadcastReceiver`, registered on subscribe | **yes, implemented and verified on device** |
 | iOS | `NSSystemTimeZoneDidChangeNotification` | `NotificationCenter` observer | **implemented**, notification not yet observed firing |
 | macOS | `NSSystemTimeZoneDidChangeNotification` | `NotificationCenter` observer | **implemented**, notification not yet observed firing |
-| Windows | `WM_TIMECHANGE` | `RegisterTopLevelWindowProcDelegate` | **implemented**, never compiled or run locally |
-| Linux | `/etc/localtime` replacement | `GFileMonitor` on `/etc` | **implemented**, never compiled or run locally |
+| Windows | `WM_TIMECHANGE` | `RegisterTopLevelWindowProcDelegate` | **implemented and green in CI**, first run |
+| Linux | `/etc/localtime` replacement | `GFileMonitor` on `/etc` | **implemented and green in CI**, first run |
 | Web | none exists | `visibilitychange`, `focus`, `pageshow`, `resume` | no, see the gap below |
 
 Plus one cross-platform layer, which you have already decided is always on:
@@ -218,14 +218,34 @@ delivered, and every running process keeps the zone it had cached.
 
 `sudo systemsetup -settimezone <zone>` goes through the privileged admin
 framework, which updates the preference store *and* the symlink *and* posts the
-notification. That is the lever a listener test has to pull.
+notification. It is the documented lever, and **it does not work on a CI
+runner.** `-settimezone` validates its argument against `-listtimezones`, which
+needs Full Disk Access that a CI shell does not have, so on a runner it rejects
+every zone in the database. The first `macos_app` run failed on exactly that:
+"systemsetup does not accept 'Asia/Kolkata'". The `test` job's macOS step has
+carried a comment warning about this the whole time.
 
-Two caveats on it. Apple's own position is that there is no supported API for
-changing the system timezone and that `systemsetup` is an admin tool rather than
-a substitute for one, so this is a harness technique and not something to
-suggest to users. And its accepted spellings are not the whole tzdb: identifiers
-exist that `-gettimezone` reports but `-listtimezones` omits, so the zone a test
-moves *to* has to be checked against that list rather than assumed.
+So the harness does in two halves what `systemsetup` would have done in one:
+
+1. `sudo ln -sfh /var/db/timezone/zoneinfo/<zone> /etc/localtime` moves the zone
+   Foundation reads. Proven to work on a runner; the `test` job relies on it.
+2. `sudo notifyutil -p com.apple.system.timezone` posts the darwin key, which is
+   the half a bare relink silently omits.
+
+That second step is a hypothesis until a CI run says otherwise, because an
+unprivileged process cannot post `com.apple.system.*` at all (verified: the post
+is dropped and `notify_post` still returns success) and whether root may is not
+documented. The script therefore checks it first, with `notifyutil -w`, and
+skips the listener case with a loud warning if root cannot post rather than
+failing for a reason that is not the plugin.
+
+What this does and does not prove is worth being precise about. The zone change
+is real and the delivery path is real: notifyd, Foundation's cache invalidation,
+the re-post as `NSSystemTimeZoneDidChangeNotification`, our observer, the
+channel, the re-resolve, the diff. The only synthetic part is who called
+`notify_post`. It does not prove that macOS itself posts that key when a user
+changes the zone in System Settings, which is a claim about macOS rather than
+about this package.
 
 Whether a host-side change propagates into a **booted iOS simulator** is a
 further unknown, and a separate one. The simulator takes its zone from the host,
@@ -615,20 +635,24 @@ Run on macOS 15 (Darwin 25.5.0), Dart 3.12.2, Flutter 3.44.9.
 | Flutter's default `minSdkVersion` | `FlutterExtension.kt` in the installed SDK | `val minSdkVersion: Int = 24` |
 | `dartPluginClass` composes with a native `pluginClass` | Flutter tooling source and docs | hybrid registration is documented and supported |
 
-Not yet verified, and needing a device or root. Every one of these is a
-platform's primary trigger, so the list is the Phase 3 test plan rather than a
-footnote:
+Verified in CI on 2026-08-08, run 31270875467, which is the only place Windows
+and Linux have ever been compiled: this repository is developed on a Mac, which
+has no Linux or Windows engine artifacts and no Docker to borrow one from. Both
+`linux_app` and `windows_app` passed on their first run, including the listener
+case, so `GFileMonitor` on `/etc` does see `timedatectl set-timezone` and
+`WM_TIMECHANGE` does reach a Flutter window on `tzutil /s`. The Windows result
+also settles the doubt about a GUI app on a headless runner receiving broadcast
+window messages: it does.
+
+Still not verified, and needing a device or root:
 
 | Claim | Needs |
 | --- | --- |
 | `NSSystemTimeZoneDidChangeNotification` fires on a real zone change, and reaches our observer | `sudo systemsetup -settimezone` on macOS. This is the one remaining gap on Apple: everything up to the observer is proven, the observer firing is not |
 | `resetSystemTimeZone` is required before re-reading rather than merely harmless | the same |
 | A host zone change propagates into a booted iOS simulator at all | the same, plus a booted simulator. If it does not, the iOS listener case cannot be driven from CI and needs a real device |
-| **Anything at all about Windows or Linux.** Neither was compiled, let alone run: this repository is developed on a Mac, which has no Linux or Windows engine artifacts and no Docker to borrow one from. The C++ and the GObject C are written against the headers and the templates and have never been through a compiler | the `windows_app` and `linux_app` CI jobs, which is why they were added in the same change as the code |
-| `WM_TIMECHANGE` reaches a Flutter window on a `tzutil /s` change | the same |
-| `GFileMonitor` on `/etc` fires for `timedatectl set-timezone` | the same |
-| A GUI app on a headless Windows runner still receives broadcast window messages | the same. This is the likeliest way the Windows job fails for a reason that is not the plugin |
-| The PowerShell harness is even syntactically valid | the same. There is no `pwsh` on this machine to parse it |
+| Root can post `com.apple.system.timezone`, which is what the macOS harness now depends on | the next `macos_app` run. The script checks this itself and skips the listener case with a warning rather than failing, so a wrong guess here shows up as a visible gap rather than a red build |
+| macOS itself posts that key when a user changes the zone in System Settings | a real Mac and a real settings change. The harness synthesizes the post, so this claim stays open |
 | Flutter web maps `visibilitychange` and `focus` to lifecycle states finely enough | a browser |
 
 The pure Dart spikes are at `/tmp/tz_spike/` and are not part of the repository.

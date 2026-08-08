@@ -1,123 +1,157 @@
-#!/bin/sh
+#!/usr/bin/env bash
 #
 # Runs the device suite as a real macOS app, and moves the system timezone
 # underneath it so the listener has a genuine notification to hear.
 #
 # The Apple half of the listener cannot be proved any other way. An app cannot
-# change the system timezone: there is no supported API for it at all, and the
-# admin tool used below needs root. So the mutation has to come from outside the
-# process, exactly as it does for Android over adb.
+# change the system timezone: there is no supported API for it at all, so the
+# mutation has to come from outside the process, exactly as it does for Android
+# over adb.
 
-set -eu
+set -euo pipefail
 
 : "${ZONE:?ZONE must name the timezone to configure}"
 : "${ZONE_AFTER:?ZONE_AFTER must name the timezone to move to mid-run}"
 
-# The process name of the built app, which is what the mover below waits for.
-APP=test_host
+# What the suite prints once its listener is registered, which is the harness's
+# cue that it is safe to move the zone. Matches `listenerReadySentinel` in
+# integration_test/device_test.dart.
+SENTINEL=LOCAL_TIMEZONE_LISTENER_READY
 
-# Do not be tempted to relink /etc/localtime instead.
+# Where the suite's output is mirrored so the mover can watch it.
+log=$(mktemp)
+
+# Foundation's zoneinfo root, not /usr/share/zoneinfo, which is itself a
+# symlink. Foundation recovers the IANA name by stripping this prefix from the
+# raw /etc/localtime target and otherwise falls back to GMT even though libc can
+# read the same tzfile.
+ZONEINFO=/var/db/timezone/zoneinfo
+
+# Why not `systemsetup -settimezone`, which is the documented way to do this and
+# the only one that posts a notification by itself:
 #
-# `sudo ln -sfh /var/db/timezone/zoneinfo/<zone> /etc/localtime` is what the
-# macOS cells in the `test` job use, and it is correct for what they need: it
-# moves the zone that Foundation *reads*. It is useless here. It mutates the
-# filesystem and nothing else, so nothing posts `com.apple.system.timezone`, no
-# NSSystemTimeZoneDidChangeNotification is delivered, and every running process
-# keeps the zone it already cached. The listener would never fire and the
-# failure would look exactly like a broken plugin.
+# It validates its argument against `-listtimezones`, and that needs Full Disk
+# Access, which a CI shell does not have. On a runner it therefore rejects every
+# zone in the database, including ones `-gettimezone` will happily report back.
+# The `test` job's macOS step already carries this warning; this script learned
+# it the hard way on 2026-08-08, when every macos_app run failed on
+# "systemsetup does not accept 'Asia/Kolkata'".
 #
-# `systemsetup -settimezone` goes through the privileged admin framework, which
-# updates the preference store and the symlink *and* posts the notification.
-# That is the whole reason this script exists rather than reusing the one liner
-# above.
+# So the change is made in two halves that `systemsetup` would have done
+# together. Relinking moves the zone Foundation reads. Posting the darwin key
+# is what tells every running process to stop trusting its cache, which is the
+# half a plain `ln -sf` silently omits and the half this whole job exists to
+# exercise.
 set_zone() {
-  if ! sudo systemsetup -settimezone "$1" >/dev/null 2>&1; then
-    echo "::error::systemsetup could not set the zone to $1. It fails this way" \
-      "when automatic time zone detection is enabled, and when the name is not" \
-      "one it accepts."
+  local zone=$1
+  if [ ! -f "$ZONEINFO/$zone" ]; then
+    echo "::error::no zone file for $zone in this tzdata"
+    exit 1
+  fi
+  sudo ln -sfh "$ZONEINFO/$zone" /etc/localtime
+  sudo notifyutil -p com.apple.system.timezone
+}
+
+check_zone() {
+  local wanted=$1
+  local actual
+  actual=$(swift -e 'import Foundation; print(NSTimeZone.local.identifier)')
+  if [ "$actual" != "$wanted" ]; then
+    echo "::error::wanted $wanted, Foundation reports '$actual'"
     exit 1
   fi
 }
 
-# Its accepted spellings are not the whole tz database. Identifiers exist that
-# `-gettimezone` will report back but `-listtimezones` does not offer, so a name
-# that works everywhere else in this repository can still be rejected here.
-# Check both up front rather than discovering it halfway through a run.
-accepted=$(sudo systemsetup -listtimezones)
-for candidate in "$ZONE" "$ZONE_AFTER"; do
-  if ! echo "$accepted" | tr -d ' ' | grep -qx "$candidate"; then
-    echo "::error::systemsetup does not accept '$candidate'. Pick one from" \
-      "\`sudo systemsetup -listtimezones\`; it is narrower than tzdb."
-    exit 1
-  fi
-done
+# Can this runner post the key at all?
+#
+# Unprivileged processes cannot: notifyd drops posts to com.apple.system.* and
+# `notify_post` still returns success, so a silent no-op is the failure mode to
+# rule out rather than discover. Root is expected to be allowed, but "expected"
+# is not "checked", and if it is wrong then the listener case below would fail
+# for a reason that has nothing to do with the plugin.
+#
+# So establish it first, with the same tools, and let the answer decide whether
+# the listener case runs at all. This is a precondition, not a softened
+# assertion: when it holds, the case is a real test that can really fail.
+can_post_darwin_key() {
+  local watcher_out
+  watcher_out=$(mktemp)
+  notifyutil -w com.apple.system.timezone >"$watcher_out" 2>&1 &
+  local watcher_pid=$!
+
+  sleep 2
+  sudo notifyutil -p com.apple.system.timezone
+  sleep 2
+
+  kill "$watcher_pid" 2>/dev/null || true
+  wait "$watcher_pid" 2>/dev/null || true
+
+  grep -q "com.apple.system.timezone" "$watcher_out"
+}
 
 set_zone "$ZONE"
+check_zone "$ZONE"
 
-# Read it back rather than trusting the setter, for the same reason the Android
-# script does: a zone that did not take makes every assertion below vacuous.
-actual=$(sudo systemsetup -gettimezone | sed 's/^Time Zone: //')
-if [ "$actual" != "$ZONE" ]; then
-  echo "::error::wanted $ZONE, the machine reports '$actual'"
-  exit 1
+if can_post_darwin_key; then
+  echo "root can post com.apple.system.timezone, so the listener case will run"
+  zone_after_define=(--dart-define=ZONE_AFTER="$ZONE_AFTER")
+else
+  echo "::warning::root cannot post com.apple.system.timezone on this runner," \
+    "so there is no way to deliver a system timezone change to the app and the" \
+    "listener case will skip. Everything else in the suite still runs, including" \
+    "the probe that the plugin is registered on the channel."
+  zone_after_define=()
 fi
 
-# Move the zone a second time while the suite is running.
-#
-# Timed off the app process appearing rather than off a fixed delay, because
-# `flutter test` spends most of its wall clock in Xcode and that varies by
-# minutes between runs. A fixed sleep either fires before any listener exists or
-# burns the job timeout waiting.
-move_zone_when_app_starts() {
-  attempt=0
-  until pgrep -x "$APP" >/dev/null 2>&1; do
+# Timed off the sentinel rather than off the process appearing, because the
+# process exists well before the suite does: `flutter test` still has to attach,
+# and moving the clock through that window is a good way to break an attach.
+move_zone_when_listener_is_ready() {
+  local attempt=0
+  until grep -q "$SENTINEL" "$log" 2>/dev/null; do
     attempt=$((attempt + 1))
-    if [ "$attempt" -ge 600 ]; then
-      echo "::warning::$APP never started, so the zone was never moved and the" \
-        "listener case will fail on its timeout rather than on a verdict"
+    if [ "$attempt" -ge 900 ]; then
+      echo "::warning::the suite never reported its listener ready, so the zone" \
+        "was never moved"
       return
     fi
     sleep 1
   done
 
-  # Margin between the process appearing and the Dart suite reaching setUpAll,
-  # where the listener is registered. The cases that assert on $ZONE run first
-  # and take milliseconds, so this only has to outlast engine startup.
-  sleep 15
-
   echo "moving the machine from $ZONE to $ZONE_AFTER"
   set_zone "$ZONE_AFTER"
 }
 
-move_zone_when_app_starts &
-mover=$!
-trap 'kill "$mover" 2>/dev/null || true' EXIT
+if [ ${#zone_after_define[@]} -gt 0 ]; then
+  move_zone_when_listener_is_ready &
+  mover=$!
+  trap 'kill "$mover" 2>/dev/null || true' EXIT
+fi
 
 # EXPECTED_RAW is deliberately not passed. Foundation reports whichever spelling
 # the OS wrote, and macOS is the platform where that genuinely varies: a machine
 # set to Asia/Kolkata can report Asia/Calcutta. EXPECTED_ZONE is compared against
-# the canonicalized value, which is the same either way, so it is the only one of
-# the two that can be asserted here without pinning a spelling this script does
-# not control.
+# the canonicalized value, which is the same either way.
 rc=0
 flutter test integration_test -d macos \
   --dart-define=EXPECTED_ZONE="$ZONE" \
-  --dart-define=ZONE_AFTER="$ZONE_AFTER" || rc=$?
+  "${zone_after_define[@]}" 2>&1 | tee "$log" || rc=$?
 
-kill "$mover" 2>/dev/null || true
-wait "$mover" 2>/dev/null || true
+if [ ${#zone_after_define[@]} -gt 0 ]; then
+  kill "$mover" 2>/dev/null || true
+  wait "$mover" 2>/dev/null || true
 
-final=$(sudo systemsetup -gettimezone | sed 's/^Time Zone: //')
-if [ "$final" = "$ZONE" ]; then
-  echo "::error::the machine is still in $ZONE, so the harness never moved it" \
-    "to $ZONE_AFTER. Whatever the listener case reported above, it was not" \
-    "reporting on a real system timezone change."
-  exit 1
-elif [ "$final" != "$ZONE_AFTER" ]; then
-  echo "::error::the run should have ended in $ZONE_AFTER and the machine is" \
-    "in '$final', so it moved for a reason this script did not choose and the" \
-    "result above says nothing about the plugin."
-  exit 1
+  final=$(swift -e 'import Foundation; print(NSTimeZone.local.identifier)')
+  if [ "$final" = "$ZONE" ]; then
+    echo "::error::the machine is still in $ZONE, so the harness never moved it" \
+      "to $ZONE_AFTER. Whatever the listener case reported above, it was not" \
+      "reporting on a real system timezone change."
+    exit 1
+  elif [ "$final" != "$ZONE_AFTER" ]; then
+    echo "::error::the run should have ended in $ZONE_AFTER and the machine is" \
+      "in '$final', so it moved for a reason this script did not choose."
+    exit 1
+  fi
 fi
 
 exit "$rc"

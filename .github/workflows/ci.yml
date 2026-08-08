@@ -306,7 +306,7 @@ jobs:
           # service writes `persist.sys.timezone` with system privilege, so
           # there is no `adb root` restart to race the emulator's post-boot adb
           # commands. Do not replace it with `adb root` plus `setprop`.
-          script: sh ../../../.github/scripts/android_device_test.sh
+          script: bash ../../../.github/scripts/android_device_test.sh
 
   # macOS, as a real Flutter app rather than a Dart process. This is the only
   # job that can prove the Apple half of the change listener, because it is the
@@ -344,7 +344,7 @@ jobs:
 
       - name: flutter test (macOS app)
         working-directory: packages/flutter_local_timezone/test_host
-        run: sh ../../../.github/scripts/macos_device_test.sh
+        run: bash ../../../.github/scripts/macos_device_test.sh
 
   # Linux, as a real Flutter app. The only platform with no timezone change
   # notification of any kind, so the plugin infers one from /etc/localtime being
@@ -375,7 +375,7 @@ jobs:
 
       - name: flutter test (Linux app)
         working-directory: packages/flutter_local_timezone/test_host
-        run: sh ../../../.github/scripts/linux_device_test.sh
+        run: bash ../../../.github/scripts/linux_device_test.sh
 
   # Windows, as a real Flutter app. This is the only job that exercises
   # WM_TIMECHANGE, and it is the one platform whose trigger arrives because the

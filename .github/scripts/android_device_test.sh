@@ -1,13 +1,18 @@
-#!/bin/sh
+#!/usr/bin/env bash
 
-set -eu
+set -euo pipefail
 
 : "${ZONE:?ZONE must name the timezone to configure}"
 : "${ZONE_AFTER:?ZONE_AFTER must name the timezone to move to mid-run}"
 : "${ANDROID_SERIAL:?android-emulator-runner must select the emulator}"
 
-# The application id of test_host, which is what the mover below waits for.
-APP_ID=com.birjuvachhani.test_host
+# What the suite prints once its listener is registered, which is the harness's
+# cue that it is safe to move the zone. Matches `listenerReadySentinel` in
+# integration_test/device_test.dart.
+SENTINEL=LOCAL_TIMEZONE_LISTENER_READY
+
+# Where the suite's output is mirrored so the mover can watch it.
+log=$(mktemp)
 
 # The action already waits for sys.boot_completed, but keep the readiness check
 # beside the device mutation it protects. `adb wait-for-device` only proves that
@@ -100,50 +105,52 @@ started=$(date +%s)
 ) &
 watcher=$!
 
-# `EXPECTED_RAW` is the same string as `EXPECTED_ZONE` because the Android
-# provider returns the property verbatim as `raw`. The matrix entries are
-# primary IANA names, so canonicalization is a no-op for all three.
-rc=0
 # Move the zone a second time while the suite is running, so the listener has
 # something real to hear. This has to come from the host: an app cannot change
 # the device zone, because SET_TIME_ZONE is privileged, so there is no way to
 # trigger a genuine ACTION_TIMEZONE_CHANGED from inside the test.
 #
-# Timed off the app process appearing rather than off a fixed delay from here.
-# `flutter test` spends most of its wall clock building and installing, and that
-# varies by minutes between runs, so a fixed sleep either fires before any
-# listener exists or burns the job timeout waiting.
-move_zone_when_app_starts() {
+# Timed off a sentinel the suite prints once its listener is registered, not off
+# the app process appearing. The process exists well before the suite runs:
+# `flutter test` still has to read the VM service URL out of logcat and attach,
+# and moving the system clock through that window is a good way to break an
+# attach that upstream already stalls on. On 2026-08-08 this cell went silent
+# exactly there and burned the job's whole 45 minute budget.
+move_zone_when_listener_is_ready() {
   attempt=0
-  until adb shell pidof "$APP_ID" >/dev/null 2>&1; do
+  until grep -q "$SENTINEL" "$log" 2>/dev/null; do
     attempt=$((attempt + 1))
-    if [ "$attempt" -ge 600 ]; then
-      echo "::warning::$APP_ID never started, so the zone was never moved and" \
-        "the listener case will fail on its timeout rather than on a verdict"
+    if [ "$attempt" -ge 900 ]; then
+      echo "::warning::the suite never reported its listener ready, so the zone" \
+        "was never moved and the listener case will fail on its timeout rather" \
+        "than on a verdict"
       return
     fi
     sleep 1
   done
 
-  # Margin between the process appearing and the Dart suite reaching setUpAll,
-  # where the listener is registered. The cases that assert on $ZONE run first
-  # and take milliseconds, so this only has to outlast engine startup.
-  sleep 15
-
   echo "moving the device from $ZONE to $ZONE_AFTER"
   adb shell cmd alarm set-timezone "$ZONE_AFTER"
 }
 
-move_zone_when_app_starts &
+move_zone_when_listener_is_ready &
 mover=$!
 # Otherwise a failure before the mover finishes leaves it running against a
 # teardown emulator, and the step hangs waiting on a background child.
 trap 'kill "$mover" 2>/dev/null || true' EXIT
 
+# `EXPECTED_RAW` is the same string as `EXPECTED_ZONE` because the Android
+# provider returns the property verbatim as `raw`. The matrix entries are
+# primary IANA names, so canonicalization is a no-op for all three.
+#
+# Tee rather than redirect. The mover needs to read this stream as it arrives,
+# and a stalled run gets killed by the job timeout, which would take an
+# unflushed log file with it and leave nothing to diagnose.
+rc=0
 flutter test integration_test -d "$ANDROID_SERIAL" \
   --dart-define=EXPECTED_ZONE="$ZONE" \
   --dart-define=EXPECTED_RAW="$ZONE" \
-  --dart-define=ZONE_AFTER="$ZONE_AFTER" || rc=$?
+  --dart-define=ZONE_AFTER="$ZONE_AFTER" 2>&1 | tee "$log" || rc=$?
 
 kill "$watcher" 2>/dev/null || true
 wait "$watcher" 2>/dev/null || true

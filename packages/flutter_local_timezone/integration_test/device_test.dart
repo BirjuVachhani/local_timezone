@@ -71,6 +71,14 @@ const expectedRaw = String.fromEnvironment('EXPECTED_RAW');
 /// `.github/scripts/android_device_test.sh`.
 const zoneAfter = String.fromEnvironment('ZONE_AFTER');
 
+/// Printed once the listener is registered, so the harness knows when it is
+/// safe to move the device zone.
+///
+/// Deliberately a shape nothing else emits, because the harness greps
+/// `flutter test`'s combined output for it and that stream also carries the
+/// tool's own chatter and anything the app logs.
+const listenerReadySentinel = 'LOCAL_TIMEZONE_LISTENER_READY';
+
 /// How long to wait for the harness to move the zone.
 ///
 /// Generous on purpose. The host schedules the change a fixed delay after the
@@ -102,6 +110,20 @@ void main() {
   setUpAll(() {
     tzdata.initializeTimeZones();
     LocalTimezoneWatcher.addListener(_observed.add);
+
+    // The harness waits for this line before moving the device zone.
+    //
+    // It used to key off the app process existing plus a fixed sleep, which
+    // races `flutter test`'s own startup: after the process appears the tool is
+    // still reading logcat for the VM service URL and attaching, and moving the
+    // system clock through that window is a good way to make an already flaky
+    // attach fail. On 2026-08-08 one Android cell went silent right there and
+    // burned the job's whole 45 minute budget.
+    //
+    // Printing from `setUpAll` removes the guesswork entirely: by the time this
+    // reaches the harness, the tool has attached, the suite is running, and the
+    // listener above is registered.
+    debugPrint(listenerReadySentinel);
   });
 
   testWidgets('resolves to a named zone', (_) async {
