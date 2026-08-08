@@ -86,8 +86,10 @@ packages/
     lib/src/                the listener funnel and its platform signal
     android/                the BroadcastReceiver that feeds it
     darwin/                 one Swift observer serving both iOS and macOS
+    windows/                a WM_TIMECHANGE window procedure delegate
+    linux/                  a GFileMonitor watching /etc
     test/                   host tests for the funnel
-    integration_test/       the Android and iOS device tests
+    integration_test/       the device tests, run on all five platforms
     test_host/              the app those tests are installed into
 docs/                       design and platform research
 research/                   background notes written while building this

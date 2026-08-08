@@ -36,6 +36,8 @@ bool get _hasNativeSignal =>
       TargetPlatform.android,
       TargetPlatform.iOS,
       TargetPlatform.macOS,
+      TargetPlatform.linux,
+      TargetPlatform.windows,
     }.contains(defaultTargetPlatform);
 
 Stream<void>? _signals;

@@ -43,15 +43,21 @@ void main() {
   final onAndroid = TargetPlatformVariant.only(TargetPlatform.android);
 
   /// Every platform with a native doorbell, so the gating test proves each one
-  /// individually rather than proving Android three times.
+  /// individually rather than proving Android five times.
   final onImplemented = TargetPlatformVariant(const {
     TargetPlatform.android,
     TargetPlatform.iOS,
     TargetPlatform.macOS,
+    TargetPlatform.linux,
+    TargetPlatform.windows,
   });
 
-  /// A platform that has no plugin yet. Swap this when Windows lands.
-  final onUnimplemented = TargetPlatformVariant.only(TargetPlatform.windows);
+  /// A platform with no plugin.
+  ///
+  /// Fuchsia, because every platform this package targets now has one. The
+  /// other unimplemented case is the web, and that one cannot be reached from
+  /// here: the gate tests `kIsWeb` first, and no VM test can make that true.
+  final onUnimplemented = TargetPlatformVariant.only(TargetPlatform.fuchsia);
 
   /// The native side of the channel, captured when Dart subscribes.
   MockStreamHandlerEventSink? sink;

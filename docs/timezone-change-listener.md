@@ -54,8 +54,8 @@ turns a platform value into an answer.
 | Android | `ACTION_TIMEZONE_CHANGED` broadcast | `BroadcastReceiver`, registered on subscribe | **yes, implemented and verified on device** |
 | iOS | `NSSystemTimeZoneDidChangeNotification` | `NotificationCenter` observer | **implemented**, notification not yet observed firing |
 | macOS | `NSSystemTimeZoneDidChangeNotification` | `NotificationCenter` observer | **implemented**, notification not yet observed firing |
-| Windows | `WM_TIMECHANGE` / `WM_SETTINGCHANGE` | `RegisterTopLevelWindowProcDelegate` | yes, needs verifying |
-| Linux | `/etc/localtime` replacement | `GFileMonitor` on `/etc` | yes |
+| Windows | `WM_TIMECHANGE` | `RegisterTopLevelWindowProcDelegate` | **implemented**, never compiled or run locally |
+| Linux | `/etc/localtime` replacement | `GFileMonitor` on `/etc` | **implemented**, never compiled or run locally |
 | Web | none exists | `visibilitychange`, `focus`, `pageshow`, `resume` | no, see the gap below |
 
 Plus one cross-platform layer, which you have already decided is always on:
@@ -272,18 +272,26 @@ API, which means it is sent by whoever changed the zone rather than by the
 system, and the Settings app is presumably that caller.
 
 **Neither is documented as "the system broadcasts this when the time zone
-changes."** Community reports claim `WM_TIMECHANGE` covers zone changes as well
-as clock changes, but the one detailed account also found the message hard to
-observe and hard to test. Handling both messages and diffing is the pragmatic
-answer, but it is a guess until someone changes the zone on a real Windows
-machine and watches what arrives.
+changes."** What settles it is the indirect evidence: `SystemEvents.TimeChanged`
+is the mechanism .NET tells developers to handle when the local zone moves, and
+the accompanying guidance is to call `TimeZoneInfo.ClearCachedData` from it.
+That event is `WM_TIMECHANGE`. If the message did not fire for zone changes,
+the recommended .NET pattern for reacting to zone changes would not work, and
+`tzutil /s` reaches it the same way the Settings app does, through
+`SetDynamicTimeZoneInformation`.
 
-If it turns out neither message fires for a Settings-driven zone change, the
-fallback is `RegNotifyChangeKeyValue` on
+**Decision: `WM_TIMECHANGE` only.** `WM_SETTINGCHANGE` is not handled. Its
+documented role is for an app *performing* a change to tell Explorer, not for
+the system to announce one, and it fires for locale, policy and environment
+edits that have nothing to do with time. Handling it would add frequent
+redundant lookups to catch a case `WM_TIMECHANGE` already covers.
+
+If the CI job proves that wrong, the fallback is `RegNotifyChangeKeyValue` on
 `HKLM\SYSTEM\CurrentControlSet\Control\TimeZoneInformation`, which is documented,
-unambiguous, and easy in native code because the plugin can own a real thread
-rather than a Dart isolate. Details of that API are in the appendix, since it was
-researched for the pure Dart design.
+unambiguous, and does not need a window. Details are in the appendix, since it
+was researched for the pure Dart design. It is a genuinely different shape:
+a subscription rather than a broadcast that happens to reach us, and it would
+need its own thread plus a way to marshal back to the platform thread.
 
 ### The hook
 
@@ -616,8 +624,11 @@ footnote:
 | `NSSystemTimeZoneDidChangeNotification` fires on a real zone change, and reaches our observer | `sudo systemsetup -settimezone` on macOS. This is the one remaining gap on Apple: everything up to the observer is proven, the observer firing is not |
 | `resetSystemTimeZone` is required before re-reading rather than merely harmless | the same |
 | A host zone change propagates into a booted iOS simulator at all | the same, plus a booted simulator. If it does not, the iOS listener case cannot be driven from CI and needs a real device |
-| `WM_TIMECHANGE` or `WM_SETTINGCHANGE` reaches a Flutter window on a Settings-driven change | a Windows machine |
-| `GFileMonitor` on `/etc` fires for `timedatectl set-timezone` | a Linux machine |
+| **Anything at all about Windows or Linux.** Neither was compiled, let alone run: this repository is developed on a Mac, which has no Linux or Windows engine artifacts and no Docker to borrow one from. The C++ and the GObject C are written against the headers and the templates and have never been through a compiler | the `windows_app` and `linux_app` CI jobs, which is why they were added in the same change as the code |
+| `WM_TIMECHANGE` reaches a Flutter window on a `tzutil /s` change | the same |
+| `GFileMonitor` on `/etc` fires for `timedatectl set-timezone` | the same |
+| A GUI app on a headless Windows runner still receives broadcast window messages | the same. This is the likeliest way the Windows job fails for a reason that is not the plugin |
+| The PowerShell harness is even syntactically valid | the same. There is no `pwsh` on this machine to parse it |
 | Flutter web maps `visibilitychange` and `focus` to lifecycle states finely enough | a browser |
 
 The pure Dart spikes are at `/tmp/tz_spike/` and are not part of the repository.

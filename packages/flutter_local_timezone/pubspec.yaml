@@ -56,3 +56,7 @@ flutter:
       macos:
         pluginClass: FlutterLocalTimezonePlugin
         sharedDarwinSource: true
+      linux:
+        pluginClass: FlutterLocalTimezonePlugin
+      windows:
+        pluginClass: FlutterLocalTimezonePluginCApi

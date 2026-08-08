@@ -346,6 +346,68 @@ jobs:
         working-directory: packages/flutter_local_timezone/test_host
         run: sh ../../../.github/scripts/macos_device_test.sh
 
+  # Linux, as a real Flutter app. The only platform with no timezone change
+  # notification of any kind, so the plugin infers one from /etc/localtime being
+  # replaced and this job is what replaces it.
+  linux_app:
+    name: linux app
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      ZONE: Asia/Kolkata
+      ZONE_AFTER: Australia/Sydney
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install the Linux desktop toolchain
+        run: |
+          sudo apt-get update
+          # xvfb because a GTK app needs a display even on a runner nobody is
+          # looking at, and without one it exits before the suite starts.
+          sudo apt-get install -y clang cmake ninja-build pkg-config \
+            libgtk-3-dev liblzma-dev libstdc++-12-dev xvfb
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - run: flutter pub get
+
+      - name: flutter test (Linux app)
+        working-directory: packages/flutter_local_timezone/test_host
+        run: sh ../../../.github/scripts/linux_device_test.sh
+
+  # Windows, as a real Flutter app. This is the only job that exercises
+  # WM_TIMECHANGE, and it is the one platform whose trigger arrives because the
+  # app owns a window rather than because it subscribed to anything.
+  windows_app:
+    name: windows app
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      # Two spellings of each zone, because Windows names them its own way and
+      # the provider maps between them through CLDR. Checked against the
+      # bundled table: `India Standard Time` maps to `Asia/Calcutta`, which
+      # canonicalizes to `Asia/Kolkata`, and `AUS Eastern Standard Time` maps
+      # to `Australia/Sydney`.
+      ZONE: Asia/Kolkata
+      WINDOWS_ZONE: India Standard Time
+      ZONE_AFTER: Australia/Sydney
+      WINDOWS_ZONE_AFTER: AUS Eastern Standard Time
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - run: flutter pub get
+
+      - name: flutter test (Windows app)
+        shell: pwsh
+        working-directory: packages/flutter_local_timezone/test_host
+        run: ../../../.github/scripts/windows_device_test.ps1
+
   # iOS, on a simulator. Narrower than the Android job on purpose: the macOS
   # cells in `test` already exercise `apple.dart` across three zones, so what
   # this adds is the one thing they cannot show, that
