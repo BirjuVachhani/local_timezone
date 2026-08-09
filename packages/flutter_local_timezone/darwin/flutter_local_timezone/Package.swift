@@ -23,6 +23,17 @@ let package = Package(
             name: "flutter_local_timezone",
             dependencies: [
                 .product(name: "FlutterFramework", package: "FlutterFramework")
+            ],
+            // SwiftPM treats anything in a target's source directory that it
+            // does not recognise as source as unhandled, and quietly leaves it
+            // out of the build. Without this line the privacy manifest sits
+            // beside the plugin and reaches no app: a debug build of test_host
+            // contained only the engine's own copy inside
+            // FlutterMacOS.framework. Apple expects a manifest from each third
+            // party SDK in a submitted app, and ours only travels if it is
+            // built into a resource bundle here.
+            resources: [
+                .process("PrivacyInfo.xcprivacy")
             ]
         )
     ]

@@ -19,6 +19,13 @@ flutter_local_timezone can re-resolve the zone and notify its listeners.
   s.source           = { :path => '.' }
   s.source_files = 'flutter_local_timezone/Sources/flutter_local_timezone/**/*.swift'
 
+  # The same manifest the SPM target lists under `resources`, by the route
+  # CocoaPods uses for it. Both paths have to carry it or an app's privacy
+  # report depends on which one integrated the plugin.
+  s.resource_bundles = {
+    'flutter_local_timezone_privacy' => ['flutter_local_timezone/Sources/flutter_local_timezone/PrivacyInfo.xcprivacy'],
+  }
+
   # Per platform rather than a single `s.platform`, which is what makes one
   # podspec able to serve both. The framework names differ and the deployment
   # targets differ, and nothing else does.
