@@ -93,13 +93,17 @@ jobs:
         run: |
           rm -rf packages/flutter_local_timezone
 
-          # `test_host` is nested inside what was just deleted, but it is also
-          # listed on its own in the root workspace, and pub rejects a member
-          # path that is not there: "No workspace packages matching
-          # packages/flutter_local_timezone/test_host". So the entry has to go
-          # with the directory. grep rather than `sed -i`, whose spelling
-          # differs across the GNU, BSD and Git Bash seds this runs on.
-          grep -v 'packages/flutter_local_timezone/test_host' pubspec.yaml > pubspec.tmp
+          # `test_host` and `example` are nested inside what was just deleted,
+          # but they are also listed on their own in the root workspace, and pub
+          # rejects a member path that is not there: "No workspace packages
+          # matching packages/flutter_local_timezone/test_host". So those
+          # entries have to go with the directory.
+          #
+          # The pattern matches the path prefix rather than either name, so a
+          # third nested member never has to be added here. grep rather than
+          # `sed -i`, whose spelling differs across the GNU, BSD and Git Bash
+          # seds this runs on.
+          grep -v 'packages/flutter_local_timezone/' pubspec.yaml > pubspec.tmp
           mv pubspec.tmp pubspec.yaml
 
       - uses: dart-lang/setup-dart@v1
@@ -198,13 +202,17 @@ jobs:
         run: |
           rm -rf packages/flutter_local_timezone
 
-          # `test_host` is nested inside what was just deleted, but it is also
-          # listed on its own in the root workspace, and pub rejects a member
-          # path that is not there: "No workspace packages matching
-          # packages/flutter_local_timezone/test_host". So the entry has to go
-          # with the directory. grep rather than `sed -i`, whose spelling
-          # differs across the GNU, BSD and Git Bash seds this runs on.
-          grep -v 'packages/flutter_local_timezone/test_host' pubspec.yaml > pubspec.tmp
+          # `test_host` and `example` are nested inside what was just deleted,
+          # but they are also listed on their own in the root workspace, and pub
+          # rejects a member path that is not there: "No workspace packages
+          # matching packages/flutter_local_timezone/test_host". So those
+          # entries have to go with the directory.
+          #
+          # The pattern matches the path prefix rather than either name, so a
+          # third nested member never has to be added here. grep rather than
+          # `sed -i`, whose spelling differs across the GNU, BSD and Git Bash
+          # seds this runs on.
+          grep -v 'packages/flutter_local_timezone/' pubspec.yaml > pubspec.tmp
           mv pubspec.tmp pubspec.yaml
 
       - uses: dart-lang/setup-dart@v1
@@ -500,13 +508,17 @@ jobs:
         run: |
           rm -rf packages/flutter_local_timezone
 
-          # `test_host` is nested inside what was just deleted, but it is also
-          # listed on its own in the root workspace, and pub rejects a member
-          # path that is not there: "No workspace packages matching
-          # packages/flutter_local_timezone/test_host". So the entry has to go
-          # with the directory. grep rather than `sed -i`, whose spelling
-          # differs across the GNU, BSD and Git Bash seds this runs on.
-          grep -v 'packages/flutter_local_timezone/test_host' pubspec.yaml > pubspec.tmp
+          # `test_host` and `example` are nested inside what was just deleted,
+          # but they are also listed on their own in the root workspace, and pub
+          # rejects a member path that is not there: "No workspace packages
+          # matching packages/flutter_local_timezone/test_host". So those
+          # entries have to go with the directory.
+          #
+          # The pattern matches the path prefix rather than either name, so a
+          # third nested member never has to be added here. grep rather than
+          # `sed -i`, whose spelling differs across the GNU, BSD and Git Bash
+          # seds this runs on.
+          grep -v 'packages/flutter_local_timezone/' pubspec.yaml > pubspec.tmp
           mv pubspec.tmp pubspec.yaml
 
       - uses: dart-lang/setup-dart@v1

@@ -36,7 +36,10 @@ Future<String> _fetch(String url) async {
     if (response.statusCode != 200) {
       throw HttpException('GET $url returned ${response.statusCode}');
     }
-    return response.transform(utf8.decoder).join();
+    // Awaited rather than returned, so the body is still inside the try when
+    // the stream is consumed. Returning the future would run `finally`, and so
+    // `client.close()`, before the first byte was read.
+    return await response.transform(utf8.decoder).join();
   } finally {
     client.close();
   }

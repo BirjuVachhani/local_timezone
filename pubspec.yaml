@@ -9,6 +9,6 @@ environment:
 workspace:
   - packages/*
   # Listed explicitly because the glob above only reaches one level. Without
-  # membership it cannot resolve flutter_local_timezone, which is not on
-  # pub.dev.
+  # membership neither can resolve flutter_local_timezone from a path.
   - packages/flutter_local_timezone/test_host
+  - packages/flutter_local_timezone/example

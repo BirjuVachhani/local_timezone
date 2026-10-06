@@ -195,8 +195,11 @@ final _GetProcessHeapDart _getProcessHeap = _kernel32
       'GetProcessHeap',
     );
 
-typedef _HeapAllocNative =
-    Pointer<Void> Function(Pointer<Void>, Uint32, IntPtr);
+typedef _HeapAllocNative = Pointer<Void> Function(
+  Pointer<Void>,
+  Uint32,
+  IntPtr,
+);
 typedef _HeapAllocDart = Pointer<Void> Function(Pointer<Void>, int, int);
 
 final _HeapAllocDart _heapAlloc = _kernel32
@@ -211,8 +214,9 @@ final _HeapFreeDart _heapFree = _kernel32
 /// Returns `DWORD`, which is 32 bits. Declaring it wider would leave the high
 /// half undefined and could turn TIME_ZONE_ID_INVALID into a value that reads
 /// as success.
-typedef _GetTimeZoneNative =
-    Uint32 Function(Pointer<_DynamicTimeZoneInformation>);
+typedef _GetTimeZoneNative = Uint32 Function(
+  Pointer<_DynamicTimeZoneInformation>,
+);
 typedef _GetTimeZoneDart = int Function(Pointer<_DynamicTimeZoneInformation>);
 
 final _GetTimeZoneDart _getDynamicTimeZoneInformation = _kernel32

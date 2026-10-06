@@ -437,37 +437,31 @@ void main() {
       expect(LocalTimezoneWatcher.listenable.value, _london);
     }, variant: onImplemented);
 
-    watcherTest(
-      'does not open a channel where there is no implementation',
-      (tester) async {
-        LocalTimezone.setMockValue(_kolkata);
+    watcherTest('does not open a channel where there is no implementation', (
+      tester,
+    ) async {
+      LocalTimezone.setMockValue(_kolkata);
 
-        final events = <LocalTimezoneEvent>[];
-        LocalTimezoneWatcher.addListener(events.add);
-        await tester.pump();
+      final events = <LocalTimezoneEvent>[];
+      LocalTimezoneWatcher.addListener(events.add);
+      await tester.pump();
 
-        expect(
-          sink,
-          isNull,
-          reason:
-              'subscribing on a platform with no plugin logs a framework error '
-              'rather than failing catchably, so it must not be attempted',
-        );
+      expect(
+        sink,
+        isNull,
+        reason:
+            'subscribing on a platform with no plugin logs a framework error '
+            'rather than failing catchably, so it must not be attempted',
+      );
 
-        // The lifecycle leg still works, which is the whole point of gating
-        // rather than throwing.
-        LocalTimezone.setMockValue(_london);
-        tester.binding.handleAppLifecycleStateChanged(
-          AppLifecycleState.inactive,
-        );
-        tester.binding.handleAppLifecycleStateChanged(
-          AppLifecycleState.resumed,
-        );
-        await tester.pump();
+      // The lifecycle leg still works, which is the whole point of gating
+      // rather than throwing.
+      LocalTimezone.setMockValue(_london);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
 
-        expect(events, [const LocalTimezoneChanged(_london)]);
-      },
-      variant: onUnimplemented,
-    );
+      expect(events, [const LocalTimezoneChanged(_london)]);
+    }, variant: onUnimplemented);
   });
 }

@@ -14,10 +14,10 @@ both packages follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Packages are versioned independently, so this file carries no version numbers of
 its own.
 
-## Unreleased
+## Initial release
 
-Nothing has been published to pub.dev yet, so everything here is part of the
-initial release.
+Everything below ships as `local_timezone` 0.1.0 and `flutter_local_timezone`
+0.1.0, the first published version of each.
 
 ### Added
 
@@ -42,10 +42,15 @@ initial release.
   `tool/generate_windows_zones.dart`, which regenerate the two `.g.dart` tables
   from IANA and CLDR upstream.
 - `flutter_local_timezone`: a Flutter-facing package re-exporting the whole
-  `local_timezone` API, plus the Android and iOS device tests and the
-  `test_host` app they are installed into.
+  `local_timezone` API and adding `LocalTimezoneWatcher`, which reports a change
+  to the device's timezone from each platform's own notification API, with an
+  app-lifecycle re-check as the backstop everywhere and the only leg on the web.
+- `flutter_local_timezone`: an example app under `example/`, the device tests
+  covering all five native platforms, and the `test_host` app they are installed
+  into.
 - CI covering Linux, macOS and Windows on x64 and arm64, Chrome on `dart2js` and
   `dart2wasm`, Node, an Android emulator and an iOS simulator, each crossed with
   several system timezones, along with a job pinned to the minimum SDK the
   pubspec promises.
-- Repository README, this changelog, and a BSD 3-Clause license.
+- Repository README, this changelog, and a BSD 3-Clause license carried by the
+  repository root and by both packages, since pub archives each one on its own.

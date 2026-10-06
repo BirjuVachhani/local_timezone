@@ -10,11 +10,34 @@ final zone = LocalTimezone.getTimeZoneName(); // Asia/Kolkata
 No plugin, no platform channel, no native code. Because it is
 synchronous, it can be called from `build()` without an `await`.
 
-> **Status: all six platforms are implemented.** Android, iOS, macOS, Linux, Windows
-> and web. Linux and Windows are the newest and cannot be exercised from a macOS
-> development machine, so their resolution logic is written as pure functions and
-> tested exhaustively against fixtures taken from real distributions; only the syscall
-> itself waits on CI.
+## Install
+
+```sh
+dart pub add local_timezone
+```
+
+```dart
+import 'package:local_timezone/local_timezone.dart';
+```
+
+There is nothing else to do. No permissions, no manifest entries, no
+entitlements, and nothing to register.
+
+> **Writing a Flutter app?** Depend on
+> [`flutter_local_timezone`](https://pub.dev/packages/flutter_local_timezone)
+> instead. It re-exports everything here, so reading the zone is identical, and
+> it adds `LocalTimezoneWatcher`, which tells you when the device's timezone
+> changes. Change notification needs each platform's own notification API, which
+> needs native code, which needs a plugin, so it cannot live in this package.
+> There is no reason to depend on both.
+
+## Platforms
+
+All six are implemented and tested on CI: Linux, macOS and Windows on x64 and
+arm64, Chrome on both `dart2js` and `dart2wasm`, Node, an Android emulator and
+an iOS simulator, each crossed with several system timezones. Each provider's
+resolution logic is also written as pure functions over its inputs, so the
+shapes a platform can report are covered by unit tests off the platform itself.
 
 ### Android
 
@@ -288,23 +311,54 @@ asynchronous even though every underlying OS call is synchronous.
 ```dart
 import 'package:local_timezone/local_timezone.dart';
 
-// The common case.
-final zone = LocalTimezone.getTimeZoneName();
+// The common case: an identifier, in the spelling a timezone database accepts.
+final zone = LocalTimezone.getTimeZoneName(); // Asia/Kolkata
 
-// A device can report a fixed UTC offset instead of a zone.
+// A device can report a fixed UTC offset instead of a zone. The result is
+// sealed, so both shapes are handled without an exception.
 switch (LocalTimezone.getTimeZone()) {
-  case NamedLocalTimezone(:final name):    useZone(name);
-  case OffsetLocalTimezone(:final offset): useOffset(offset);
+  case NamedLocalTimezone(:final canonicalized): useZone(canonicalized);
+  case OffsetLocalTimezone(:final offset):       useOffset(offset);
 }
 ```
 
-Failures are exceptions, never a silent fallback to UTC. `LocalTimezoneException` is
-sealed, so they can be handled exhaustively. See [`example/`](example/) for the full
-set of cases.
+Failures are exceptions, never a silent fallback to UTC, because a quietly wrong
+timezone is harder to notice than a crash and tends to surface as corrupted
+timestamps much later. `LocalTimezoneException` is sealed, so they can be handled
+exhaustively:
+
+```dart
+try {
+  useZone(LocalTimezone.getTimeZoneName());
+} on LocalTimezoneException catch (error) {
+  switch (error) {
+    case LocalTimezoneUnavailableException(:final platform, :final reason):
+      log('no timezone on $platform: $reason');
+    case LocalTimezoneNotNamedException(:final resolved):
+      // The name-returning form was asked for a name and the device only has an
+      // offset. The result is attached, so no second lookup is needed.
+      useOffset(resolved.offset);
+  }
+}
+```
+
+Nothing is cached, so every call reflects the device's current timezone even if
+the user changes it mid-session. A call costs a few hundred nanoseconds on
+Android and Apple and about 40 microseconds on Linux and the web, which is
+several hundred per frame at the slowest. Memoize at the call site if that is not
+enough, since that is also the only place that knows when the value should be
+discarded.
+
+`getTimeZoneAsync()` and `getTimeZoneNameAsync()` mirror both entry points for
+callers already inside async code, or migrating from a channel-based package.
+
+See [`example/local_timezone_example.dart`](example/local_timezone_example.dart)
+for the full set of cases as runnable code.
 
 ## Requirements
 
-The Dart SDK constraint is `^3.12.2`.
+The Dart SDK constraint is `^3.12.0`, and CI runs a job pinned to exactly that
+floor rather than to whatever `stable` happens to be.
 
 Two different floors matter. The first column is what this package's own code needs.
 The second is what Flutter imposes on any app regardless, and for Flutter users it is
@@ -371,7 +425,29 @@ On Apple platforms the call goes through `objc_msgSend` against `libobjc`, which
 already loaded in every process, so nothing is bundled, signed, or notarized. Web
 covers both `dart2js` and `dart2wasm`.
 
+## Testing
+
+The lookup can be replaced with a fixed value, so a test never depends on the
+zone the machine running it happens to be in:
+
+```dart
+LocalTimezone.setMockValue(
+  const NamedLocalTimezone(
+    name: 'Asia/Kolkata',
+    canonicalized: 'Asia/Kolkata',
+    raw: 'Asia/Kolkata',
+  ),
+);
+addTearDown(LocalTimezone.clearMock);
+```
+
+`setMock` takes a whole `LocalTimezone` for a mock that should change its answer
+between calls. In a background isolate, set it in that isolate's entrypoint: the
+override is per-isolate, like every other static.
+
 ## Additional information
 
 Issues and pull requests are welcome at
 [github.com/BirjuVachhani/local_timezone](https://github.com/BirjuVachhani/local_timezone/issues).
+
+Licensed under [BSD 3-Clause](LICENSE).

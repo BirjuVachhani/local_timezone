@@ -71,90 +71,74 @@ void main() {
       }
     });
 
-    test(
-      'tracks the TZ environment variable',
-      () {
-        // Proves the value is read from the platform rather than being a
-        // constant. These are all current primary names, so canonicalizing
-        // leaves them alone and all three layers coincide.
-        for (final zone in const [
-          'Europe/Paris',
-          'America/Denver',
-          'Pacific/Chatham',
-        ]) {
-          expect(resolveWithTz(zone), 'named|$zone|$zone|$zone');
-        }
-      },
-      timeout: const Timeout(Duration(minutes: 2)),
-    );
+    test('tracks the TZ environment variable', () {
+      // Proves the value is read from the platform rather than being a
+      // constant. These are all current primary names, so canonicalizing
+      // leaves them alone and all three layers coincide.
+      for (final zone in const [
+        'Europe/Paris',
+        'America/Denver',
+        'Pacific/Chatham',
+      ]) {
+        expect(resolveWithTz(zone), 'named|$zone|$zone|$zone');
+      }
+    }, timeout: const Timeout(Duration(minutes: 2)));
   });
 
   group('canonicalization', () {
-    test(
-      'rewrites the deprecated names Foundation reports verbatim',
-      () {
-        // Foundation does no canonicalization: the identifier is the tail of
-        // the TZDEFAULT symlink, returned as-is. So Apple can and does report
-        // any of the IANA backward names, and canonicalizing is load-bearing here
-        // rather than the no-op it looks like on a Mac that happens to be
-        // configured with a primary name.
-        //
-        // Note the direction. Apple's own knownTimeZoneNames comes from ICU,
-        // whose stable-ID policy keeps `Asia/Calcutta` canonical and omits
-        // `Asia/Kolkata` entirely, so it must never be used to validate these.
-        expect(
-          resolveWithTz('Asia/Calcutta'),
-          'named|Asia/Kolkata|Asia/Calcutta|Asia/Calcutta',
-        );
-        expect(
-          resolveWithTz('Europe/Kiev'),
-          'named|Europe/Kyiv|Europe/Kiev|Europe/Kiev',
-        );
-      },
-      timeout: const Timeout(Duration(minutes: 2)),
-    );
+    test('rewrites the deprecated names Foundation reports verbatim', () {
+      // Foundation does no canonicalization: the identifier is the tail of
+      // the TZDEFAULT symlink, returned as-is. So Apple can and does report
+      // any of the IANA backward names, and canonicalizing is load-bearing here
+      // rather than the no-op it looks like on a Mac that happens to be
+      // configured with a primary name.
+      //
+      // Note the direction. Apple's own knownTimeZoneNames comes from ICU,
+      // whose stable-ID policy keeps `Asia/Calcutta` canonical and omits
+      // `Asia/Kolkata` entirely, so it must never be used to validate these.
+      expect(
+        resolveWithTz('Asia/Calcutta'),
+        'named|Asia/Kolkata|Asia/Calcutta|Asia/Calcutta',
+      );
+      expect(
+        resolveWithTz('Europe/Kiev'),
+        'named|Europe/Kyiv|Europe/Kiev|Europe/Kiev',
+      );
+    }, timeout: const Timeout(Duration(minutes: 2)));
 
-    test(
-      'maps the bare GMT that Apple reports for UTC',
-      () {
-        // Foundation names the zero-offset zone `GMT` where browsers say
-        // `UTC`. Bare `GMT` is a real zone name rather than an offset, so it
-        // stays named and canonicalizes to `Etc/GMT`.
-        expect(resolveWithTz('UTC'), 'named|Etc/GMT|GMT|GMT');
-      },
-      timeout: const Timeout(Duration(minutes: 2)),
-    );
+    test('maps the bare GMT that Apple reports for UTC', () {
+      // Foundation names the zero-offset zone `GMT` where browsers say
+      // `UTC`. Bare `GMT` is a real zone name rather than an offset, so it
+      // stays named and canonicalizes to `Etc/GMT`.
+      expect(resolveWithTz('UTC'), 'named|Etc/GMT|GMT|GMT');
+    }, timeout: const Timeout(Duration(minutes: 2)));
   });
 
   group('fixed offsets', () {
-    test(
-      'reports a POSIX TZ string as an offset, not as a zone name',
-      () {
-        // Foundation falls back to a fixed-offset zone when TZ holds something
-        // it cannot resolve to a zone file, and names it `GMT+0530`. That is
-        // not an identifier any timezone database accepts, so returning it as
-        // one would be dishonest.
-        //
-        // The sign is the part worth pinning down, and `raw` deliberately
-        // disagrees with `offset` here. Foundation names the zone in the ISO
-        // convention, so it calls TZ=GMT+5 "GMT+0500". libc reads the same
-        // string as POSIX and runs the process at -05:00, and Dart's DateTime
-        // follows libc. Since a caller has to land on the same wall clock as
-        // DateTime, the offset is the runtime's and the name is Foundation's.
-        //
-        // Every expectation below was measured, then cross-checked against
-        // `TZ=$z date +%z`. Do not hand-edit them; re-measure.
-        expect(resolveWithTz('GMT+5'), 'offset|-05:00|GMT+0500|GMT');
-        expect(resolveWithTz('UTC+05:30'), 'offset|-05:30|GMT+0530|GMT');
-        expect(resolveWithTz('GMT-8'), 'offset|+08:00|GMT-0800|GMT');
+    test('reports a POSIX TZ string as an offset, not as a zone name', () {
+      // Foundation falls back to a fixed-offset zone when TZ holds something
+      // it cannot resolve to a zone file, and names it `GMT+0530`. That is
+      // not an identifier any timezone database accepts, so returning it as
+      // one would be dishonest.
+      //
+      // The sign is the part worth pinning down, and `raw` deliberately
+      // disagrees with `offset` here. Foundation names the zone in the ISO
+      // convention, so it calls TZ=GMT+5 "GMT+0500". libc reads the same
+      // string as POSIX and runs the process at -05:00, and Dart's DateTime
+      // follows libc. Since a caller has to land on the same wall clock as
+      // DateTime, the offset is the runtime's and the name is Foundation's.
+      //
+      // Every expectation below was measured, then cross-checked against
+      // `TZ=$z date +%z`. Do not hand-edit them; re-measure.
+      expect(resolveWithTz('GMT+5'), 'offset|-05:00|GMT+0500|GMT');
+      expect(resolveWithTz('UTC+05:30'), 'offset|-05:30|GMT+0530|GMT');
+      expect(resolveWithTz('GMT-8'), 'offset|+08:00|GMT-0800|GMT');
 
-        // The sharpest divergence: Foundation names it GMT+0530 while the
-        // process is actually running in UTC, because libc rejects the
-        // four-digit form and falls back.
-        expect(resolveWithTz('GMT+0530'), 'offset|+00:00|GMT+0530|GMT');
-      },
-      timeout: const Timeout(Duration(minutes: 2)),
-    );
+      // The sharpest divergence: Foundation names it GMT+0530 while the
+      // process is actually running in UTC, because libc rejects the
+      // four-digit form and falls back.
+      expect(resolveWithTz('GMT+0530'), 'offset|+00:00|GMT+0530|GMT');
+    }, timeout: const Timeout(Duration(minutes: 2)));
   });
 
   group('LocalTimezone.getTimeZone', () {

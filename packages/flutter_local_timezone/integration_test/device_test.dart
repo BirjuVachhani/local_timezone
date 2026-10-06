@@ -268,31 +268,27 @@ void main() {
   // the same name carrying `listen` and `cancel`, so invoking `listen` by hand
   // reaches the same native stream handler. No handler means
   // MissingPluginException.
-  testWidgets(
-    'the platform channel has a native handler',
-    (_) async {
-      const probe = MethodChannel(timezoneSignalChannelName);
+  testWidgets('the platform channel has a native handler', (_) async {
+    const probe = MethodChannel(timezoneSignalChannelName);
+    try {
+      await probe.invokeMethod<void>('listen');
+    } on MissingPluginException {
+      fail(
+        'nothing is registered on "$timezoneSignalChannelName", so this '
+        'platform has no native doorbell however green the rest of this '
+        'suite looks. Check that the plugin is declared for this platform in '
+        'pubspec.yaml, that the host app depends on flutter_local_timezone, '
+        'and that the channel name matches on both sides.',
+      );
+    } finally {
+      // Undo it, for tidiness rather than correctness: this is the last case.
       try {
-        await probe.invokeMethod<void>('listen');
-      } on MissingPluginException {
-        fail(
-          'nothing is registered on "$timezoneSignalChannelName", so this '
-          'platform has no native doorbell however green the rest of this '
-          'suite looks. Check that the plugin is declared for this platform in '
-          'pubspec.yaml, that the host app depends on flutter_local_timezone, '
-          'and that the channel name matches on both sides.',
-        );
-      } finally {
-        // Undo it, for tidiness rather than correctness: this is the last case.
-        try {
-          await probe.invokeMethod<void>('cancel');
-        } on PlatformException {
-          // Nothing after this depends on the subscription.
-        }
+        await probe.invokeMethod<void>('cancel');
+      } on PlatformException {
+        // Nothing after this depends on the subscription.
       }
-    },
-    skip: kIsWeb || !_platformsWithADoorbell.contains(defaultTargetPlatform),
-  );
+    }
+  }, skip: kIsWeb || !_platformsWithADoorbell.contains(defaultTargetPlatform));
 }
 
 /// Kept beside the probe rather than imported, so that adding a platform to

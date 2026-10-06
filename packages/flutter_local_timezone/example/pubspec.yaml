@@ -1,0 +1,38 @@
+name: flutter_local_timezone_example
+
+description: >-
+  Shows the device's timezone, all three identifier layers, and a live log of
+  change events. See README.md.
+
+publish_to: none
+
+version: 1.0.0+1
+
+resolution: workspace
+
+environment:
+  sdk: ^3.12.0
+  flutter: ">=3.44.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # A path dependency, not a version constraint, so the example always builds
+  # against the source next to it rather than whatever is on pub.dev.
+  #
+  # Declaring it here is also what registers the native side. The tool walks
+  # this pubspec's dependency graph to decide what goes into
+  # GeneratedPluginRegistrant, and the workspace putting the package on this
+  # project's package config is a different lookup: imports would resolve
+  # without this line while the EventChannel had no handler, leaving the
+  # listener silently reduced to its app-lifecycle leg.
+  flutter_local_timezone:
+    path: ../
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true

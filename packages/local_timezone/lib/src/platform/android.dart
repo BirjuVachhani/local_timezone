@@ -139,10 +139,14 @@ Duration? parseJavaCustomId(String value) {
 /// subject to that.
 final DynamicLibrary _libc = DynamicLibrary.open('libc.so');
 
-typedef _PropertyGetNative =
-    Int32 Function(Pointer<Uint8> name, Pointer<Uint8> value);
-typedef _PropertyGetDart =
-    int Function(Pointer<Uint8> name, Pointer<Uint8> value);
+typedef _PropertyGetNative = Int32 Function(
+  Pointer<Uint8> name,
+  Pointer<Uint8> value,
+);
+typedef _PropertyGetDart = int Function(
+  Pointer<Uint8> name,
+  Pointer<Uint8> value,
+);
 
 final _PropertyGetDart _propertyGet = _libc
     .lookupFunction<_PropertyGetNative, _PropertyGetDart>(

@@ -1,6 +1,6 @@
 import 'package:local_timezone/local_timezone.dart';
 
-void main() async {
+Future<void> main() async {
   simplest();
   handlingFixedOffsets();
   handlingFailure();
@@ -19,8 +19,10 @@ void simplest() {
 /// to handle both without an exception.
 void handlingFixedOffsets() {
   switch (LocalTimezone.getTimeZone()) {
-    case NamedLocalTimezone(:final name):
-      print('zone: $name'); // zone: Asia/Kolkata
+    // `canonicalized` rather than `name`, because this is the spelling a
+    // timezone database will accept. See seeingWhatThePlatformSaid below.
+    case NamedLocalTimezone(:final canonicalized):
+      print('zone: $canonicalized'); // zone: Asia/Kolkata
     case OffsetLocalTimezone(:final offset, :final iso8601):
       // No daylight saving rules are available in this case, so avoid
       // arithmetic that crosses a DST boundary.
@@ -51,14 +53,15 @@ void handlingFailure() {
 /// timezone databases do not reliably accept the deprecated spelling.
 void seeingWhatThePlatformSaid() {
   final resolved = LocalTimezone.getTimeZone();
-  print('raw: ${resolved.raw}'); // raw: Asia/Calcutta   (on Chrome)
+  print('raw:           ${resolved.raw}'); // Asia/Calcutta, on Chrome
 
   if (resolved case NamedLocalTimezone(:final name, :final canonicalized)) {
     // Three layers, always all present. `raw` is what the system said, `name`
     // is that parsed into an identifier, and `canonicalized` is the current
-    // primary spelling.
-    print('name:         $name'); // name:         Asia/Calcutta
-    print('canonicalized: $canonicalized'); // canonicalized: Asia/Kolkata
+    // primary spelling. Hand the last one to a timezone database; the other two
+    // are for diagnostics and bug reports.
+    print('name:          $name'); // Asia/Calcutta
+    print('canonicalized: $canonicalized'); // Asia/Kolkata
   }
 }
 
